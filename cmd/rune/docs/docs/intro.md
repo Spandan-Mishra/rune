@@ -41,7 +41,9 @@ Rune runs on macOS and Linux. Find your platform below for the specifics.
   the system OpenGL and X11 libraries installed and an OpenGL-capable driver.
   On a minimal or headless install you may need to add your distribution's
   OpenGL (Mesa) and X11 client library packages. Most desktop installs
-  already include them.
+  already include them. This applies to the windowed editor only: `rune
+  --tui` and `rune --headless` load no graphical library and run on a
+  machine that has none.
 
 ## Install
 
@@ -71,7 +73,7 @@ docs show. Click it until it matches the editor you picked, and every key on
 every page will match your setup.
 :::
 
-If the text is too small, press `<meta>` and `+` to make the font bigger, or
+If the text is too small, press `<meta>` and `=` to make the font bigger, or
 `<meta>` and `-` to make it smaller.
 
 Whichever you pick, the rest is already wired: language intelligence,

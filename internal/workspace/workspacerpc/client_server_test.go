@@ -683,6 +683,54 @@ func TestServerWatchpointLifecycle(t *testing.T) {
 		assert.Empty(t, server.watchpoints)
 		server.mu.Unlock()
 	})
+
+	t.Run("streams whose schemes hand out the same id do not clobber each other", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		scheme := workspacetest.NewMockWorkspace(ctrl)
+		// A chroot is a fresh scheme with its own id counter, so two
+		// streams rooted in different directories both see id 2.
+		for _, root := range []string{"a", "b"} {
+			chroot := workspacetest.NewMockWorkspace(ctrl)
+			chroot.EXPECT().Watch("path", gomock.Any(), gomock.Any()).Return(2, nil)
+			chroot.EXPECT().StopWatch(2).Return(nil)
+			scheme.EXPECT().Chroot(root).Return(chroot, nil)
+		}
+		server := NewServer(scheme, CommandAuthorizerFunc(
+			func(context.Context, workspaceapi.Cmd) error { return nil }))
+
+		type stream struct {
+			cancel context.CancelFunc
+			done   chan error
+			id     chan int64
+		}
+		start := func(root string) stream {
+			ctx, cancel := context.WithCancel(context.Background())
+			st := stream{cancel: cancel, done: make(chan error, 1), id: make(chan int64, 1)}
+			go func() {
+				st.done <- server.Watch(&workspacerpc.WatchRequest{
+					Path:   "path",
+					Root:   root,
+					Events: []workspacerpc.Event{workspacerpc.Event_Write},
+				}, testWatchServer{ctx: ctx, ids: st.id})
+			}()
+			return st
+		}
+		a := start("a")
+		idA := <-a.id
+		b := start("b")
+		idB := <-b.id
+		assert.NotEqual(t, idA, idB, "server must hand out unique ids across chroots")
+
+		a.cancel()
+		require.ErrorIs(t, <-a.done, context.Canceled)
+
+		_, err := server.StopWatch(context.Background(), &workspacerpc.StopWatchRequest{Id: idB})
+		require.NoError(t, err, "stopping the second stream after the first ended")
+		require.ErrorIs(t, <-b.done, context.Canceled)
+		server.mu.Lock()
+		assert.Empty(t, server.watchpoints)
+		server.mu.Unlock()
+	})
 }
 
 func setupClientServerIntegrationTest(
@@ -781,9 +829,13 @@ type dirEntry struct {
 
 type testWatchServer struct {
 	ctx context.Context
+	ids chan<- int64
 }
 
-func (s testWatchServer) Send(*workspacerpc.WatchMessage) error {
+func (s testWatchServer) Send(msg *workspacerpc.WatchMessage) error {
+	if s.ids != nil && msg.GetType() == workspacerpc.WatchMessage_TypeResponse {
+		s.ids <- msg.GetResponse().GetId()
+	}
 	return nil
 }
 

@@ -30,6 +30,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/schemeapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/term"
+	"unstable.build/rune/internal/debug"
 	"unstable.build/rune/internal/term/vte/vteparser"
 	"unstable.build/rune/internal/workspace/workspacetest"
 )
@@ -1247,7 +1248,7 @@ func TestComponentCloseWaitsForInflightStartCommand(t *testing.T) {
 	}
 
 	closed := make(chan error, 1)
-	go func() { closed <- comp.Close() }()
+	go debug.CapturePanicReport(func() { closed <- comp.Close() })
 
 	select {
 	case <-closed:
@@ -1262,6 +1263,33 @@ func TestComponentCloseWaitsForInflightStartCommand(t *testing.T) {
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close never completed after the spawn settled")
+	}
+}
+
+func TestComponentCreatePtyDefersAsyncSpawnUntilInitialized(t *testing.T) {
+	t.Parallel()
+
+	invoked := make(chan struct{}, 1)
+	cfg := DefaultConfig()
+	cfg.CommandExpander = expanderFunc(func(_ context.Context, line string) (string, error) {
+		invoked <- struct{}{}
+		return line, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	comp := &Component{
+		terminal: &testExecutor{}, executor: &testExecutor{},
+		cfg: cfg, ctx: ctx, cancelCtx: cancel,
+	}
+	t.Cleanup(cancel)
+	require.NoError(t, comp.createPty([]string{"sh"}))
+	t.Cleanup(func() { require.NoError(t, comp.Close()) })
+
+	// Drain any launched spawn so the assertion does not depend on scheduling.
+	comp.WaitSpawn()
+	select {
+	case <-invoked:
+		t.Fatal("PTY preparation launched the expander before synchronous initialization")
+	default:
 	}
 }
 

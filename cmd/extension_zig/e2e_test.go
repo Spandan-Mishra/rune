@@ -33,6 +33,8 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/semanticapi"
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
+	"github.com/unstablebuild/rune-go-sdk/handler/repl"
+	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/extension/langext"
 	"unstable.build/rune/internal/ide/idelsp"
@@ -644,4 +646,18 @@ func textOffset(text string, line, char int) int {
 		off += len(lines[i])
 	}
 	return min(off+char, len(text))
+}
+
+// TestE2E_ZigHandlerVersion runs `zig version` against a real zig.
+func TestE2E_ZigHandlerVersion(t *testing.T) {
+	zigBin := findZigBin(t)
+	dir := t.TempDir()
+	_, h := newZigHandler(newDirExecutor(dir), newFakeNotifications(), dir,
+		func(context.Context) string { return zigBin }, nil)
+	it, err := h.HandleCommand(context.Background(),
+		repl.Command{Name: "zig", Args: []string{"version"}}, repl.NopProgressWriter())
+	require.NoError(t, err)
+	out, err := iterator.ToSlice(context.Background(), it)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
 }

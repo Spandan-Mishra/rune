@@ -63,7 +63,7 @@ type Component struct {
 	// invoking executor.StartCommand.
 	closed atomic.Bool
 	// spawnWG tracks the async expandAndStart goroutine that
-	// createPty spawns when CommandExpander is set. Tests can call
+	// Init spawns when CommandExpander is set. Tests can call
 	// WaitSpawn to block until the spawn (and any
 	// reportSpawnError watcher hand-off) has completed.
 	spawnWG sync.WaitGroup
@@ -155,6 +155,15 @@ func (t *Component) Init(
 
 	t.parser.Init(h, new(vteparser.StdTimeout))
 	t.SetDefaultAttributes(t.defAttr)
+	// StartCommand holds mu during the descriptor hand-off, so launch only
+	// after synchronous initialization no longer needs that lock.
+	if cfg.CommandExpander != nil {
+		t.spawnWG.Add(1)
+		go debug.CapturePanicReport(func() {
+			defer t.spawnWG.Done()
+			t.expandAndStart(cfg.CommandAndArgs)
+		})
+	}
 	return err
 }
 
@@ -831,7 +840,7 @@ func (t *Component) Pid() workspaceapi.Pid {
 }
 
 // WaitSpawn blocks until the async expandAndStart goroutine
-// (created by createPty when Config.CommandExpander is set) has
+// (created by Init when Config.CommandExpander is set) has
 // finished, including any reportSpawnError watcher hand-off.
 // Tests use this to settle integration timing where the pty/process
 // outcome influences subsequent rendering.
@@ -881,11 +890,6 @@ func (t *Component) createPty(cmdAndArgs []string) error {
 
 	t.pty = pty
 	if t.cfg.CommandExpander != nil {
-		t.spawnWG.Add(1)
-		go debug.CapturePanicReport(func() {
-			defer t.spawnWG.Done()
-			t.expandAndStart(cmdAndArgs)
-		})
 		return nil
 	}
 	cmdAndArgsStr := strings.Join(cmdAndArgs, " ")

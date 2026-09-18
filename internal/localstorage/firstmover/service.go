@@ -516,6 +516,8 @@ func (s *Service) follow(ctx context.Context, addr net.Addr) (bool, error) {
 		return true, err
 	}
 
+	defer func() { _ = conn.Close() }()
+
 	client := new(storagerpcclient.Client)
 	client.Init(conn, s.cfg.Marshaler)
 
@@ -550,7 +552,10 @@ loop:
 			s.monitorLeader(ctx, conn)
 			s.log(log.DebugLevel, "Successfully connected to leader. Unlocking API...")
 			break loop
-		case connectivity.Connecting, connectivity.Idle:
+		case connectivity.Idle:
+			conn.Connect()
+			fallthrough
+		case connectivity.Connecting:
 			didChange := conn.WaitForStateChange(ctx, state)
 			if !didChange {
 				s.log(log.TraceLevel, "Stopped monitoring for state changes. ctx is canceled")
@@ -576,7 +581,12 @@ loop:
 		state := conn.GetState()
 		s.log(log.TraceLevel, "Monitoring for state changes. Current: %s", state)
 		switch state {
-		case connectivity.Ready, connectivity.Idle, connectivity.Connecting:
+		case connectivity.Idle:
+			// A lost leader can leave gRPC idle; without a new RPC it will
+			// never reconnect and cannot trigger the failure timeout below.
+			conn.Connect()
+			fallthrough
+		case connectivity.Ready, connectivity.Connecting:
 			if !conn.WaitForStateChange(ctx, state) {
 				s.log(log.TraceLevel, "Stopped monitoring for state changes. ctx is canceled")
 				return false, nil
@@ -666,10 +676,23 @@ func (s *Service) setActiveAndUnlock(svc storageapi.Service) {
 func (s *Service) recoverSubscriptions() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for topic, stream := range s.pubsub.clientStreams {
+	for topic, entry := range s.pubsub.clientStreams {
+		if topic == internalTopic {
+			// the goodbye channel belongs to the connection that
+			// just died; monitorLeader opens a fresh one per leader.
+			continue
+		}
 		var msgs [][]byte
-		for len(stream) > 0 {
-			msg := <-stream
+		// entry.ch is nil (len 0) while the subscription is still
+		// being established: nothing is buffered yet, but the topic
+		// must still be restored.
+		for len(entry.ch) > 0 {
+			msg := <-entry.ch
+			if msg.err != nil {
+				// the pump reports the dead connection into the
+				// stream; that is not a message to replay.
+				continue
+			}
 			msgs = append(msgs, msg.msg.GetData())
 		}
 		s.subscriptions[topic] = append(s.subscriptions[topic], msgs...)

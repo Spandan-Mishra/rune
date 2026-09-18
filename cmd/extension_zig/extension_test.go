@@ -587,17 +587,3 @@ func newTestZigActionRouter() (textapi.CommandManual, textapi.CommandHandler) {
 	return newZigActionHandler(&captureLSP{}, &fakeEditor{}, &fakeWM{},
 		newFakeNotifications(), lspcmd.NewSelectionTracker())
 }
-
-// TestE2E_ZigHandlerVersion runs `zig version` against a real zig.
-func TestE2E_ZigHandlerVersion(t *testing.T) {
-	zigBin := findZigBin(t)
-	dir := t.TempDir()
-	_, h := newZigHandler(newDirExecutor(dir), newFakeNotifications(), dir,
-		func(context.Context) string { return zigBin }, nil)
-	it, err := h.HandleCommand(context.Background(),
-		repl.Command{Name: "zig", Args: []string{"version"}}, repl.NopProgressWriter())
-	require.NoError(t, err)
-	out, err := iterator.ToSlice(context.Background(), it)
-	require.NoError(t, err)
-	require.Len(t, out, 1)
-}

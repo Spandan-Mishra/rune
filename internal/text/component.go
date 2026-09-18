@@ -1242,6 +1242,24 @@ func (c *Component) LastFlush(h browserapi.Handler) (time.Time, error) {
 	return fc.LastFlush(), nil
 }
 
+// Settled returns nil when the given handler has no save or reload whose
+// result is still pending, and otherwise a channel that is closed once
+// every pending result has been handed to the scheduler. Callers that must
+// not act on the half-applied state of a file (its saved timestamp, its
+// dirty marker) wait on it and then schedule their retry, which runs behind
+// those results.
+func (c *Component) Settled(h browserapi.Handler) <-chan struct{} {
+	t, ok := h.(*browser.Tab)
+	if !ok {
+		return nil
+	}
+	efc, ok := t.Closer().(*editorFlusherCloser)
+	if !ok {
+		return nil
+	}
+	return efc.settled
+}
+
 func (c *Component) getContent(h Handler) string {
 	cells := h.CellView().RawCells()
 	return term.CellsToString(cells)
