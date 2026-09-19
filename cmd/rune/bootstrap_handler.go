@@ -578,6 +578,7 @@ func (b *bootstrapHandler) performSwap() error {
 			closeErr = fmt.Errorf("close pre-config ide: %w", cerr)
 		}
 		b.preIDE = nil
+		b.prompter = realIDE
 	}
 	b.publishAppMenuInstall()
 	b.publishQuickMenuInstall()
@@ -906,13 +907,7 @@ func (b *bootstrapHandler) prompt(
 	bindings []term.KeyComb,
 	h sdkhandler.PromptHandler,
 ) browser.Window {
-	if b.prompter != nil {
-		return b.prompter.Prompt(message, options, bindings, h)
-	}
-	if b.preIDE != nil {
-		return b.preIDE.Prompt(message, options, bindings, h)
-	}
-	return nil
+	return b.prompter.Prompt(message, options, bindings, h)
 }
 
 func (b *bootstrapHandler) openWelcomePrompt() {
