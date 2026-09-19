@@ -876,7 +876,7 @@ const (
 )
 
 const (
-	optTelemetryYes = " sure "
+	optTelemetryYes = " yes "
 	optTelemetryNo  = " no thanks "
 )
 

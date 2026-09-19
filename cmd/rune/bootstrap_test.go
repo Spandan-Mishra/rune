@@ -34,7 +34,7 @@ import (
 )
 
 func TestTelemetryOptionToChoiceMapping(t *testing.T) {
-	require.Equal(t, " sure ", optTelemetryYes)
+	require.Equal(t, " yes ", optTelemetryYes)
 	require.Equal(t, " no thanks ", optTelemetryNo)
 
 	cases := []struct {
@@ -336,7 +336,7 @@ func TestBootstrapTelemetryPersistenceRoundTrip(t *testing.T) {
 		option      string
 		wantEnabled bool
 	}{
-		{"sure enables telemetry", optTelemetryYes, true},
+		{"yes enables telemetry", optTelemetryYes, true},
 		{"no thanks disables telemetry", optTelemetryNo, false},
 	}
 
