@@ -326,6 +326,7 @@ func TestBootstrapPromptProgression(t *testing.T) {
 	telPrompt := prompter.prompts[2]
 	require.Contains(t, telPrompt.message, "## Help us pick what to build next")
 	require.Contains(t, telPrompt.message, "```json\n"+apiclient.ExampleUsagePayloadJSON()+"\n```")
+	require.Contains(t, telPrompt.message, "[Telemetry](https://docs.rune.build/learn/telemetry/)")
 	require.Equal(t, []string{optTelemetryYes, optTelemetryNo}, telPrompt.options)
 	require.Equal(t, bootstrapTelemetryKeys, telPrompt.bindings)
 }

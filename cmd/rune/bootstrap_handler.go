@@ -972,7 +972,7 @@ func (b *bootstrapHandler) openTelemetryPrompt() {
 		apiclient.ExampleUsagePayloadJSON() + "\n" +
 		"```\n\n" +
 		"You can change this any time in ~/.rune/config.yaml, and the full list " +
-		"of fields is on the Telemetry page in the docs."
+		"of fields is on the [Telemetry](https://docs.rune.build/learn/telemetry/) page in the docs."
 	guard := b.promptGuard()
 	b.prompt(
 		msg,
