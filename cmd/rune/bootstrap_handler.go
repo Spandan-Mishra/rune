@@ -959,7 +959,7 @@ func (b *bootstrapHandler) openVimPrompt() {
 func (b *bootstrapHandler) openTelemetryPrompt() {
 	msg := "## Help us pick what to build next\n\n" +
 		"Rune reports a small amount of anonymous usage data. The most useful " +
-		"signal is which languages people actually edit -- it is how we decide " +
+		"signal is which languages people actually edit and it is how we decide " +
 		"which language support to build next.\n\n" +
 		"We never send file names, paths, file contents, terminal output, or " +
 		"anything you type. Here is a complete report:\n\n" +
