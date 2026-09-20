@@ -575,6 +575,31 @@ missing description`)
 	})
 }
 
+func TestRegistryReloadSince(t *testing.T) {
+	dir := t.TempDir()
+	writeSkill(t, dir, "skill-1", "---\nname: skill-1\ndescription: Skill 1\n---\nbody")
+
+	r := NewRegistry(osFileSystem{}, dirURI(""), []string{dir}, nil)
+	baseline := r.Snapshot()
+	assert.Contains(t, baseline, "skill-1")
+	assert.Contains(t, baseline, "explore")
+
+	// Add a new skill
+	writeSkill(t, dir, "skill-2", "---\nname: skill-2\ndescription: Skill 2\n---\nbody")
+
+	// Intermediate standard reloads update registry state
+	for range 3 {
+		r.Reload()
+	}
+
+	// ReloadSince against the older baseline must still identify skill-2 as Added
+	res := r.ReloadSince(baseline)
+	require.Len(t, res.Added, 1)
+	assert.Equal(t, "skill-2", res.Added[0].Name)
+	assert.Empty(t, res.Updated)
+	assert.Empty(t, res.Dropped)
+}
+
 func TestSkillEqual(t *testing.T) {
 	base := Skill{
 		Name:          "skill",

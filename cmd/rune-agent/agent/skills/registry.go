@@ -200,20 +200,35 @@ func (r *SkillRegistry) RemoveDir(dir string) error {
 	return nil
 }
 
+// Snapshot returns a copy of the currently registered skills mapped by name.
+func (r *SkillRegistry) Snapshot() map[string]Skill {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return maps.Clone(r.byName)
+}
+
 // Reload re-scans all tracked directories and re-registers builtins.
 // New or updated skills become visible; skills whose SKILL.md was
-// removed are dropped. This is safe to call from the agent loop on
-// every turn so that out-of-band skill installations are picked up.
+// removed are dropped. Diff fields (Added, Updated, Dropped) are computed
+// against the registry's state immediately prior to reload.
+// This is safe to call from the agent loop on every turn so that
+// out-of-band skill installations are picked up.
 func (r *SkillRegistry) Reload() ReloadResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev := maps.Clone(r.byName)
+	return r.reloadLocked(prev)
+}
 
-	// Snapshot existing state for diffing.
-	prevByName := make(map[string]Skill, len(r.byName))
-	for k, v := range r.byName {
-		prevByName[k] = v
-	}
+// ReloadSince re-scans all tracked directories and computes differential
+// changes (Added, Updated, Dropped) against the provided prev baseline snapshot.
+func (r *SkillRegistry) ReloadSince(prev map[string]Skill) ReloadResult {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.reloadLocked(prev)
+}
 
+func (r *SkillRegistry) reloadLocked(prev map[string]Skill) ReloadResult {
 	r.byName = make(map[string]Skill, len(r.byName))
 	var allErrors []SkillError
 
@@ -239,22 +254,22 @@ func (r *SkillRegistry) Reload() ReloadResult {
 
 	// Compute Added and Updated
 	for name, curr := range r.byName {
-		prev, existed := prevByName[name]
+		prevSkill, existed := prev[name]
 		if !existed {
 			// Builtins are always present and not considered newly added.
 			if !strings.HasPrefix(curr.Dir, "<builtin>/") {
 				res.Added = append(res.Added, curr)
 			}
-		} else if !skillEqual(prev, curr) {
+		} else if !skillEqual(prevSkill, curr) {
 			res.Updated = append(res.Updated, curr)
 		}
 	}
 
 	// Compute Dropped
-	for name, prev := range prevByName {
+	for name, prevSkill := range prev {
 		if _, exists := r.byName[name]; !exists {
-			if !strings.HasPrefix(prev.Dir, "<builtin>/") {
-				res.Dropped = append(res.Dropped, prev)
+			if !strings.HasPrefix(prevSkill.Dir, "<builtin>/") {
+				res.Dropped = append(res.Dropped, prevSkill)
 			}
 		}
 	}

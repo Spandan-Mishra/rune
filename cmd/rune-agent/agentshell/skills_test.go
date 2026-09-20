@@ -131,6 +131,36 @@ func TestAgentShell_SkillsReload_Command(t *testing.T) {
 	assert.Contains(t, out, "diagnose")
 }
 
+func TestAgentShell_SkillsReload_SurvivesIntermediateReloads(t *testing.T) {
+	skillsDir := t.TempDir()
+	sh, _ := newSkillsTestShell(t, []string{skillsDir})
+
+	// Initial reload
+	out := renderShellCommand(t, sh, repl.Command{Name: CommandName, Args: []string{"skills", "reload"}})
+	assert.Contains(t, out, "No skill changes detected.")
+
+	// Drop a new skill on disk
+	writeTestSkill(t, skillsDir, "telemetry", "---\nname: telemetry\ndescription: Telemetry agent\n---\nCollect metrics.")
+
+	// Simulate intermediate background agent loop reloads
+	for range 5 {
+		sh.skillRegistry.Reload()
+	}
+
+	// Execute an unrelated command which runs HandleCommand's pre-dispatch Reload()
+	_ = renderShellCommand(t, sh, repl.Command{Name: CommandName, Args: []string{"chats", "list"}})
+
+	// Now run skills reload: Added (1) MUST be reported despite intermediate reloads
+	out = renderShellCommand(t, sh, repl.Command{Name: CommandName, Args: []string{"skills", "reload"}})
+	assert.Contains(t, out, "Added (1)")
+	assert.Contains(t, out, "telemetry")
+	assert.Contains(t, out, "Telemetry agent")
+
+	// Immediate subsequent reload should detect no changes
+	out = renderShellCommand(t, sh, repl.Command{Name: CommandName, Args: []string{"skills", "reload"}})
+	assert.Contains(t, out, "No skill changes detected.")
+}
+
 func TestAgentShell_SkillsAddDir_Command(t *testing.T) {
 	sh, _ := newSkillsTestShell(t, nil)
 	newDir := t.TempDir()

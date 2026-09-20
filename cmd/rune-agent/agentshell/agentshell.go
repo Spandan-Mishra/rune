@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -148,22 +149,23 @@ func New(
 		panic("agentshell: memoryDataPath must not be empty")
 	}
 	s := &shell{
-		wm:             wm,
-		llmSvc:         llmSvc,
-		defaultModel:   defaultModel,
-		store:          store,
-		registry:       registry,
-		agentsConfig:   agentsConfig,
-		cfg:            cfg,
-		skillRegistry:  skillRegistry,
-		cwd:            cwd,
-		fs:             fs,
-		storage:        storage,
-		exec:           exec,
-		lsp:            lsp,
-		parser:         parser,
-		notifications:  notifications,
-		memoryDataPath: memoryDataPath,
+		wm:                 wm,
+		llmSvc:             llmSvc,
+		defaultModel:       defaultModel,
+		store:              store,
+		registry:           registry,
+		agentsConfig:       agentsConfig,
+		cfg:                cfg,
+		skillRegistry:      skillRegistry,
+		lastReportedSkills: skillRegistry.Snapshot(),
+		cwd:                cwd,
+		fs:                 fs,
+		storage:            storage,
+		exec:               exec,
+		lsp:                lsp,
+		parser:             parser,
+		notifications:      notifications,
+		memoryDataPath:     memoryDataPath,
 	}
 	for _, o := range opts {
 		o(s)
@@ -185,6 +187,8 @@ type shell struct {
 	llmSvc              llmapi.Service
 	historySystemPrompt bool
 	auditStore          *audit.Store
+	muSkills            sync.Mutex
+	lastReportedSkills  map[string]skills.Skill
 	skillRegistry       *skills.SkillRegistry
 	cwd                 workspaceapi.URI
 	fs                  workspaceapi.FileSystem
@@ -433,10 +437,7 @@ func (s *shell) HandleCommand(
 
 	// Re-scan skill directories so out-of-band changes are picked up,
 	// mirroring the agent loop's per-turn Reload in agent.go.
-	// Skip implicit reload for "skills reload" so the handler can compute the diff.
-	if s.skillRegistry != nil && !(cmd.Name == "skills" && len(cmd.Args) > 0 && cmd.Args[0] == "reload") {
-		s.skillRegistry.Reload()
-	}
+	s.skillRegistry.Reload()
 
 	return s.handleCommand(ctx, cmd, pw)
 }
@@ -1257,10 +1258,10 @@ func (s *shell) listSkills() iterator.Iterator[component.Responsive] {
 }
 
 func (s *shell) reloadSkills() iterator.Iterator[component.Responsive] {
-	if s.skillRegistry == nil {
-		return markdownOutput("*(no skill registry configured)*\n")
-	}
-	res := s.skillRegistry.Reload()
+	s.muSkills.Lock()
+	res := s.skillRegistry.ReloadSince(s.lastReportedSkills)
+	s.lastReportedSkills = s.skillRegistry.Snapshot()
+	s.muSkills.Unlock()
 	var b strings.Builder
 	b.WriteString("## Skills Reloaded\n\n")
 
@@ -1506,9 +1507,6 @@ func (s *shell) completeSkills(ctx context.Context, args []string) (iterator.Ite
 }
 
 func (s *shell) completeSkillNames(prefix string) iterator.Iterator[string] {
-	if s.skillRegistry == nil {
-		return iterator.FromSlice[string](nil)
-	}
 	all := s.skillRegistry.List()
 	var matches []string
 	for _, sk := range all {
@@ -1520,9 +1518,6 @@ func (s *shell) completeSkillNames(prefix string) iterator.Iterator[string] {
 }
 
 func (s *shell) completeSkillDirs(prefix string) iterator.Iterator[string] {
-	if s.skillRegistry == nil {
-		return iterator.FromSlice[string](nil)
-	}
 	dirs := s.skillRegistry.Dirs()
 	var matches []string
 	for _, d := range dirs {
