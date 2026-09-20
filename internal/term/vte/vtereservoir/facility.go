@@ -353,20 +353,23 @@ func (f *Facility) initCap(initialCapacity int) {
 			defer wg.Done()
 			vte, err := f.new(true)
 			f.mu.Lock()
-			defer f.mu.Unlock()
 			f.pendingInit--
-			defer f.cond.Broadcast()
+			closed := f.closed
+			if err == nil && !closed {
+				f.pool = append(f.pool, vte)
+			}
+			f.cond.Broadcast()
+			f.mu.Unlock()
 			if err != nil {
 				f.log(log.WarnLevel, "new vte: %v", err)
 				return
 			}
-			// Do not resurrect a closed pool: dispose the
-			// just-created VTE instead of leaking it back in.
-			if f.closed {
+			// Do not resurrect a closed pool: dispose the just-created
+			// VTE instead of leaking it back in. Its Close re-takes
+			// f.mu to decide whether to re-pool, so it must run off-lock.
+			if closed {
 				_ = vte.Close()
-				return
 			}
-			f.pool = append(f.pool, vte)
 		})
 	}
 	wg.Wait()

@@ -82,17 +82,7 @@ workspace:
 	require.NoError(t, os.WriteFile(testFile, []byte("hello world\n"), 0o644))
 
 	mu := new(sync.Mutex)
-	// Scheduler that mirrors the production event loop: scheduled
-	// callbacks run on a fresh goroutine while holding mu, so async
-	// addWorkspace / reload installs can land back into IDE state.
-	scheduleNextTick := func(fn func()) bool {
-		go func() {
-			mu.Lock()
-			defer mu.Unlock()
-			fn()
-		}()
-		return true
-	}
+	scheduleNextTick, drainSchedule := newTestScheduler(t, mu)
 
 	i, err := New(dir, configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
 		WithLocker(mu),
@@ -106,6 +96,7 @@ workspace:
 	mu.Lock()
 	root.Resize(80, 24)
 	mu.Unlock()
+	drainSchedule()
 	i.WaitWorkspaces()
 
 	sendKeys := func(t *testing.T, seq string) {

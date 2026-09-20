@@ -71,8 +71,21 @@ type pubsub struct {
 	followerConn *grpc.ClientConn
 
 	// leader and follower
-	client        pubsubpb.PubSubClient
-	clientStreams map[string]chan msgError // stream cache
+	client pubsubpb.PubSubClient
+	// clientStreams holds one entry per topic this node subscribed
+	// to. An entry is inserted before the Receive RPC is issued so
+	// that concurrent subscribers to the same topic share the single
+	// server stream instead of racing to open their own.
+	clientStreams map[string]*clientStream
+}
+
+// clientStream is this node's subscription to a topic. ready is
+// closed once the server stream is established (ch set) or failed
+// (err set); both fields are written under pubsub.mu before that.
+type clientStream struct {
+	ready chan struct{}
+	ch    chan msgError
+	err   error
 }
 
 type subscriber struct {
@@ -90,7 +103,7 @@ func (p *pubsub) init(lockFile, pid string) {
 }
 
 func (p *pubsub) reset() {
-	p.clientStreams = make(map[string]chan msgError)
+	p.clientStreams = make(map[string]*clientStream)
 	p.subscribers = make(map[string][]*subscriber)
 	p.id = uuid.New().String()
 	p.cancelFn()
@@ -173,110 +186,154 @@ func (p *pubsub) subscribe(
 ) (context.Context, chan msgError, error) {
 	p.mu.Lock()
 	quitCtx := p.ctx
-	stream, ok := p.clientStreams[topic]
 	client := p.client
-	p.mu.Unlock()
-	if ok {
-		if excl {
-			return quitCtx, nil, errAlreadySubscribed
-		}
-		return quitCtx, stream, nil
+	if entry, ok := p.clientStreams[topic]; ok {
+		p.mu.Unlock()
+		return p.awaitStream(quitCtx, subscriptionCtx, entry, excl)
 	}
-
-	req := pubsubpb.ReceiveMessage_Request{
-		Topic: topic,
-	}
-	// if topic stream doesn't exist, create a new one
-	msg := pubsubpb.ReceiveMessage{
-		Req: &req,
-	}
-	pbStream, err := client.Receive(subscriptionCtx)
-	if err != nil {
-		return quitCtx, nil, err
-	}
-	err = pbStream.Send(&msg)
-	if err != nil {
-		return quitCtx, nil, err
-	}
-	// blocks until server has sent header and so
-	// connection is fully established
-	md, err := pbStream.Header()
-	if err != nil {
-		return quitCtx, nil, err
-	}
-
-	p.log(log.DebugLevel, "subscribed to topic %s, metadata: %+v", topic, md)
-
-	p.mu.Lock()
 	select {
 	case <-quitCtx.Done():
 		p.mu.Unlock()
 		return quitCtx, nil, quitCtx.Err()
-	case <-subscriptionCtx.Done():
-		p.mu.Unlock()
-		return quitCtx, nil, subscriptionCtx.Err()
 	default:
 	}
-	stream = make(chan msgError, clientStreamBuffer)
-	p.clientStreams[topic] = stream
+	entry := &clientStream{ready: make(chan struct{})}
+	p.clientStreams[topic] = entry
 	p.mu.Unlock()
 
-	// stream messages until until srv stream is done,
-	// broken or pubsub is closed
+	pbStream, err := openStream(subscriptionCtx, client, topic)
+	if err == nil {
+		select {
+		case <-quitCtx.Done():
+			err = quitCtx.Err()
+		case <-subscriptionCtx.Done():
+			err = subscriptionCtx.Err()
+		default:
+		}
+	}
+
+	p.mu.Lock()
+	if err != nil {
+		if p.clientStreams[topic] == entry {
+			delete(p.clientStreams, topic)
+		}
+		entry.err = err
+		close(entry.ready)
+		p.mu.Unlock()
+		return quitCtx, nil, err
+	}
+	entry.ch = make(chan msgError, clientStreamBuffer)
+	close(entry.ready)
+	p.mu.Unlock()
+
+	p.log(log.DebugLevel, "subscribed to topic %s", topic)
+
 	go debug.CapturePanicReport(func() {
+		p.pumpStream(quitCtx, subscriptionCtx, topic, entry, pbStream)
+	})
+	return quitCtx, entry.ch, nil
+}
 
-		defer func() {
-			p.mu.Lock()
-			defer p.mu.Unlock()
+// awaitStream joins a subscription another caller is establishing or
+// has already established.
+func (p *pubsub) awaitStream(
+	quitCtx, subscriptionCtx context.Context,
+	entry *clientStream, excl bool,
+) (context.Context, chan msgError, error) {
+	select {
+	case <-entry.ready:
+	case <-quitCtx.Done():
+		return quitCtx, nil, quitCtx.Err()
+	case <-subscriptionCtx.Done():
+		return quitCtx, nil, subscriptionCtx.Err()
+	}
+	if entry.err != nil {
+		return quitCtx, nil, entry.err
+	}
+	if excl {
+		return quitCtx, nil, errAlreadySubscribed
+	}
+	return quitCtx, entry.ch, nil
+}
 
-			if s, ok := p.clientStreams[topic]; ok && s == stream {
-				// allow re-connect
-				delete(p.clientStreams, topic)
-			}
-			close(stream)
-		}()
+// openStream returns once the server has acknowledged the
+// subscription with its header, so a Publish issued right after
+// subscribe returns is guaranteed to find this subscriber.
+func openStream(
+	ctx context.Context, client pubsubpb.PubSubClient, topic string,
+) (pubsubpb.PubSub_ReceiveClient, error) {
+	pbStream, err := client.Receive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req := pubsubpb.ReceiveMessage{
+		Req: &pubsubpb.ReceiveMessage_Request{Topic: topic},
+	}
+	if err := pbStream.Send(&req); err != nil {
+		return nil, err
+	}
+	if _, err := pbStream.Header(); err != nil {
+		return nil, err
+	}
+	return pbStream, nil
+}
 
-		for {
-			msg, err := pbStream.Recv()
-			p.log(log.TraceLevel, "client stream Recv returned: %q, %v", msg, err)
-			select {
-			case stream <- msgError{msg: msg.GetData(), err: err}:
-				if err != nil {
-					return
-				}
-				p.log(log.TraceLevel, "client stream sending ack for message: %q", msg)
-				ack := pubsubpb.ReceiveMessage_Ack{}
-				ackMsg := pubsubpb.ReceiveMessage{Ack: &ack}
-				err = pbStream.SendMsg(&ackMsg)
-				if err != nil {
-					p.log(log.TraceLevel, "client stream error sending ack for message: %q: %v",
-						msg, err)
-					select {
-					case stream <- msgError{err: err}:
-					case <-quitCtx.Done():
-						return
-					}
-				}
-			case <-quitCtx.Done():
-				p.log(log.TraceLevel, "ignoring message %q, err=%v: quit context is done",
-					msg, err)
-				// best effort
-				select {
-				case stream <- msgError{err: err}:
-				default:
-				}
-				return
-			case <-subscriptionCtx.Done():
-				return
-			}
+// pumpStream forwards server messages into entry.ch and acks each one
+// until the server stream ends, breaks, or this pubsub incarnation is
+// closed.
+func (p *pubsub) pumpStream(
+	quitCtx, subscriptionCtx context.Context, topic string,
+	entry *clientStream, pbStream pubsubpb.PubSub_ReceiveClient,
+) {
+	stream := entry.ch
+	defer func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+
+		if p.clientStreams[topic] == entry {
+			// allow re-connect
+			delete(p.clientStreams, topic)
+		}
+		close(stream)
+	}()
+
+	for {
+		msg, err := pbStream.Recv()
+		p.log(log.TraceLevel, "client stream Recv returned: %q, %v", msg, err)
+		select {
+		case stream <- msgError{msg: msg.GetData(), err: err}:
 			if err != nil {
 				return
 			}
+			p.log(log.TraceLevel, "client stream sending ack for message: %q", msg)
+			ack := pubsubpb.ReceiveMessage_Ack{}
+			ackMsg := pubsubpb.ReceiveMessage{Ack: &ack}
+			err = pbStream.SendMsg(&ackMsg)
+			if err != nil {
+				p.log(log.TraceLevel, "client stream error sending ack for message: %q: %v",
+					msg, err)
+				select {
+				case stream <- msgError{err: err}:
+				case <-quitCtx.Done():
+					return
+				}
+			}
+		case <-quitCtx.Done():
+			p.log(log.TraceLevel, "ignoring message %q, err=%v: quit context is done",
+				msg, err)
+			// best effort
+			select {
+			case stream <- msgError{err: err}:
+			default:
+			}
+			return
+		case <-subscriptionCtx.Done():
+			return
 		}
-
-	})
-
-	return quitCtx, stream, nil
+		if err != nil {
+			return
+		}
+	}
 }
 
 func (p *pubsub) receive(
@@ -294,32 +351,23 @@ func (p *pubsub) receive(
 		return nil, err
 	}
 
-	for {
-		p.log(log.TraceLevel, "client is waiting to receive a message for topic %q", topic)
-		var msgErr msgError
-		var ok bool
-		select {
-		case msgErr, ok = <-stream:
-		case <-quitCtx.Done():
-			return nil, quitCtx.Err()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		if !ok {
-			return nil, status.Errorf(codes.Aborted, "closed")
-		}
-		if msgErr.err != nil {
-			return nil, msgErr.err
-		}
-		// when we publish as a leader, we should not receive
-		// these messages on the next call to Receive.
-		if msgErr.msg.GetSender() == p.id {
-			p.log(log.TraceLevel, "ignoring self published message %q for topic %q",
-				msgErr.msg, topic)
-			continue
-		}
-		return msgErr.msg.GetData(), nil
+	p.log(log.TraceLevel, "client is waiting to receive a message for topic %q", topic)
+	var msgErr msgError
+	var ok bool
+	select {
+	case msgErr, ok = <-stream:
+	case <-quitCtx.Done():
+		return nil, quitCtx.Err()
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
+	if !ok {
+		return nil, status.Errorf(codes.Aborted, "closed")
+	}
+	if msgErr.err != nil {
+		return nil, msgErr.err
+	}
+	return msgErr.msg.GetData(), nil
 }
 
 func (p *pubsub) Publish(

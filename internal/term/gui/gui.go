@@ -112,6 +112,9 @@ type GUI struct {
 	lastPositionY int
 	iteration     int64
 	deviceScale   float64
+
+	links linkScanner
+
 	// echoLikely arms the once-per-tick echo wait. It is learned, not
 	// configured: an interrupt pending at tick entry right after a
 	// single-key tick means the focused handler echoes asynchronously
@@ -158,6 +161,7 @@ func New(handler tui.Handler, options ...Option) (*GUI, error) {
 	ret.input = newInput(ret.fontManager)
 	ret.mouse = newMouse(ret.fontManager)
 	ret.drag = newDragPoller(ret.mouse)
+	ret.links = newLinkScanner()
 	ret.ctx = context.Background()
 	ret.ctx, ret.cancelCtx = context.WithCancel(ret.ctx)
 
@@ -262,6 +266,9 @@ func (g *GUI) Draw(screen *ebiten.Image) {
 	}
 	screen.Clear()
 	cells := g.writer.RawCells()
+	if g.links.armed() {
+		cells = g.links.overlay(cells)
+	}
 	g.renderer.Draw(screen, cells, g.cursor.show,
 		g.cursor.pos, g.cursor.style, float64(g.renderOffset.X),
 		float64(g.renderOffset.Y))
@@ -335,6 +342,15 @@ func (g *GUI) Update() error {
 	g.pendingEvents = append(g.pendingEvents, g.processWindowClosed()...)
 	needsDraw := g.needsDraw
 
+	// Underlines must appear and disappear on the modifier alone, with no
+	// mouse movement and no handler event, so a transition renders by itself.
+	if g.links.setMeta(g.input.metaHeld()) {
+		g.needsRender = true
+	}
+	if g.links.armed() {
+		g.links.pointAt(g.mouse.clampedCoordinates(), g.writer.RawCells())
+	}
+
 	interruptPending := g.interruptPending.Swap(false)
 	for len(g.updateChan) > 0 {
 		g.pendingEvents = append(g.pendingEvents, <-g.updateChan)
@@ -384,6 +400,11 @@ func (g *GUI) Update() error {
 			g.drawHandler(payloadCtx)
 		case term.EventError, term.EventResize:
 			/* not dispatched by GUI */
+		case term.EventMouse:
+			if g.links.handleMouse(ev, g.writer.RawCells()) {
+				continue
+			}
+			fallthrough
 		default:
 			if ev.Type == term.EventKey {
 				keyEvents++
@@ -642,6 +663,7 @@ func (g *GUI) drawHandler(ctx context.Context) {
 	g.cursor.pos, g.cursor.style, g.cursor.show = g.handler.Cursor()
 	g.needsDraw = false
 	g.needsRender = true
+	g.links.invalidate()
 }
 
 func (g *GUI) resize(width, height int, deviceScale float64) {

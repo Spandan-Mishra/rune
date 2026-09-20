@@ -746,7 +746,10 @@ func (t *testVte) Close() error {
 	if t.calledClose {
 		return errors.New("called close twice")
 	}
-	if t.f.pool == nil || t.UsedAlternateBuffer() {
+	// Mirror vteAdapter.Close: the drained probe takes the facility
+	// lock, so a Close issued while the caller holds it deadlocks
+	// here exactly as it does in production.
+	if t.f.drained() || t.UsedAlternateBuffer() {
 		t.calledClose = true
 		return nil
 	}

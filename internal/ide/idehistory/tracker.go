@@ -26,6 +26,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"unstable.build/rune/internal/text"
+	"unstable.build/rune/internal/workspace"
 )
 
 // tracker subscribes to editor events for one workspace URI and
@@ -44,8 +45,9 @@ type tracker struct {
 	ctx context.Context
 
 	files map[string]File // keyed by URI string
-	// skip lists URIs whose events should be ignored entirely.
-	skip map[string]struct{}
+	// skip lists pseudo-buffer namespaces whose events should be
+	// ignored entirely, matched by path prefix.
+	skip []workspaceapi.URI
 }
 
 // Handle implements text.EventHandler. Open/Close/Flush events trigger
@@ -57,8 +59,10 @@ func (t *tracker) Handle(ctx context.Context, ev textapi.Event) bool {
 		return false
 	}
 	uriStr := ev.URI.String()
-	if _, skip := t.skip[uriStr]; skip {
-		return false
+	for _, s := range t.skip {
+		if workspace.URIUnderPrefix(ev.URI, s) {
+			return false
+		}
 	}
 	prev, ok := t.files[uriStr]
 

@@ -924,6 +924,7 @@ func findDlv(t *testing.T) string {
 // returns its path. The directory is cleaned up automatically.
 func setupBuggy(t *testing.T) string {
 	t.Helper()
+	warmBuggyBuildCache(t)
 	tmp, err := os.MkdirTemp("", "debugshell-e2e-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
@@ -945,6 +946,30 @@ func setupBuggy(t *testing.T) string {
 			filepath.Join(tmp, e.Name()), data, 0o644))
 	}
 	return tmp
+}
+
+var (
+	warmBuggyOnce sync.Once
+	warmBuggyOut  []byte
+	warmBuggyErr  error
+)
+
+// warmBuggyBuildCache compiles the fixture once with the flags dlv
+// uses for launch mode "debug". Every parallel test otherwise makes
+// its own dlv rebuild the whole standard library with -N -l from a
+// cold cache at the same time, and dlv only reports "initialized"
+// after that build; on a small CI runner the fan-out overran the
+// initialize timeout. The dependency objects are cached by content,
+// so the per-test build in a temp copy is then a cache hit.
+func warmBuggyBuildCache(t *testing.T) {
+	t.Helper()
+	warmBuggyOnce.Do(func() {
+		build := exec.Command("go", "build", "-gcflags=all=-N -l", "-o", os.DevNull, ".")
+		build.Dir = "testdata/buggy"
+		build.Env = append(os.Environ(), "GOFLAGS=")
+		warmBuggyOut, warmBuggyErr = build.CombinedOutput()
+	})
+	require.NoError(t, warmBuggyErr, "warm build cache: %s", warmBuggyOut)
 }
 
 func sprintf(format string, args ...any) string {
@@ -1391,10 +1416,13 @@ func newIDEHarness(t *testing.T, dlvBin, dir string) *ideHarness {
 
 	ed := vi.Editor(vi.WithStatusBarConfig(false, text.StatusBarConfig{
 		Publisher:        texttest.NopEditor(),
-		ScheduleNextTick: func(fn func()) bool { fn(); return true },
+		ScheduleNextTick: hh.uiSchedule,
 	}))
 	tcfg := text.DefaultConfig()
-	tcfg.ScheduleNextTick = func(fn func()) bool { fn(); return true }
+	// Flush and reload completions land on the browser tabs through
+	// this scheduler from worker goroutines; like every other UI
+	// mutation in the harness they must be serialized behind uiMu.
+	tcfg.ScheduleNextTick = hh.uiSchedule
 	comp, err := text.NewComponent(ed, ws, tcfg)
 	require.NoError(t, err)
 	comp.Browser().Resize(120, 40)

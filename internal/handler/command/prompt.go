@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"unicode"
 
 	"github.com/ernestrc/go-multierror"
 	log "github.com/sirupsen/logrus"
@@ -607,7 +608,17 @@ func (h *Prompt) handleCommon(ev *term.Event, sync bool) (quit, handled bool) {
 		}
 	case term.ModCtrl:
 		handled = true
+		if ev.Key == term.KeyBackspace {
+			h.deleteWordBack(sync)
+			return
+		}
 		switch ev.Ch {
+		// 'h' is bound because terminals without the kitty keyboard
+		// protocol collapse <c-backspace> onto ^H before Rune sees it.
+		case 'w', 'h':
+			h.deleteWordBack(sync)
+		case 'u':
+			h.deleteLineBack(sync)
 		case 'j', 'n':
 			if h.userScrolling {
 				handled = h.list.FocusDown()
@@ -636,8 +647,89 @@ func (h *Prompt) handleCommon(ev *term.Event, sync bool) (quit, handled bool) {
 		default:
 			handled = false
 		}
+	case term.ModAlt:
+		if ev.Key != term.KeyBackspace {
+			return
+		}
+		handled = true
+		h.deleteWordBack(sync)
 	}
 	return
+}
+
+// deleteCellBack removes the last cell of the prompt buffer, keeping
+// the fuzzy-match token buffer in sync and unwinding one level of
+// argument completion when that token buffer drains. It reports
+// whether there was anything left to remove.
+func (h *Prompt) deleteCellBack(sync bool) bool {
+	cols := h.buf.Columns(0)
+	if cols != 0 {
+		h.buf.DeleteCell(term.Coordinates{X: cols - 1})
+	}
+	if h.mode == modeCommandPromptCommand {
+		if cols == 0 {
+			return false
+		}
+		h.list.Buffer().Replace(h.buf.String())
+		return true
+	}
+	if buf := h.list.Buffer(); buf.Size() != 0 {
+		buf.DeleteCell(term.Coordinates{X: buf.Columns(0) - 1})
+		return true
+	}
+	if !h.decArgsCompleteMode(sync) {
+		h.setCommandMode()
+	}
+	return true
+}
+
+// isWordRune classifies a rune for the prompt's shell-style word
+// deletion. The boundary is narrower than whitespace on purpose so a
+// single <c-w> walks back one path component while completing a file
+// argument, matching the inputbox handler in the SDK.
+func isWordRune(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// lastCellRune returns the leading rune of the prompt buffer's final
+// cell. Word boundaries are classified per cell rather than per rune
+// so wide characters and combining marks are never split.
+func (h *Prompt) lastCellRune() (rune, bool) {
+	cols := h.buf.Columns(0)
+	if cols == 0 {
+		return 0, false
+	}
+	c, ok := h.buf.Cell(term.Coordinates{X: cols - 1})
+	if !ok {
+		return 0, false
+	}
+	return c.Ch, true
+}
+
+// deleteWordBack drops the run of separators before the cursor and
+// then the word preceding them. Unlike <backspace> it never closes
+// the prompt when the line drains.
+func (h *Prompt) deleteWordBack(sync bool) {
+	h.cancelPreview()
+	for _, word := range [...]bool{false, true} {
+		for {
+			r, ok := h.lastCellRune()
+			if !ok || isWordRune(r) != word {
+				break
+			}
+			if !h.deleteCellBack(sync) {
+				return
+			}
+		}
+	}
+}
+
+// deleteLineBack clears the whole input, returning the prompt to
+// command mode without closing it.
+func (h *Prompt) deleteLineBack(sync bool) {
+	h.cancelPreview()
+	for h.deleteCellBack(sync) {
+	}
 }
 
 // deleteHistoryCompletionFocusItem will remove the entry from the history as well as
@@ -684,17 +776,12 @@ func (h *Prompt) handleCommand(ev term.Event, sync bool) (quit, handled bool) {
 
 	switch ev.Key {
 	case term.KeyBackspace:
-		cols := h.buf.Columns(0)
-		if cols == 0 {
-			handled = true
+		handled = true
+		if !h.deleteCellBack(sync) {
 			quit = true
 			h.cancelPreview()
 			h.Cancel()
-			return
 		}
-		h.buf.DeleteCell(term.Coordinates{X: cols - 1})
-		h.list.Buffer().Replace(h.buf.String())
-		handled = true
 		return
 	}
 
@@ -746,19 +833,7 @@ func (h *Prompt) handleCompleteArgs(ev term.Event, sync bool) (quit, handled boo
 
 		h.cancelPreview()
 		handled = true
-		cols := h.buf.Columns(0)
-		if cols != 0 {
-			h.buf.DeleteCell(term.Coordinates{X: cols - 1})
-		}
-		if h.list.Buffer().Size() != 0 {
-			h.list.Buffer().DeleteCell(
-				term.Coordinates{X: h.list.Buffer().Columns(0) - 1},
-			)
-			return
-		}
-		if !h.decArgsCompleteMode(sync) {
-			h.setCommandMode()
-		}
+		h.deleteCellBack(sync)
 		return
 	}
 

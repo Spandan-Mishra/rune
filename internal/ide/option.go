@@ -472,30 +472,41 @@ func WithStartingTutorial(name string) Option {
 	}
 }
 
+// WithoutSessionReopen disables the one-shot startup prompt offering to
+// reopen the previous session's workspaces. Instances spawned as
+// additional OS windows share the storage of the instance that spawned
+// them, so reopening its workspaces would duplicate them.
+func WithoutSessionReopen() Option {
+	return func(opts *options) {
+		opts.disableSessionReopen = true
+	}
+}
+
 type options struct {
-	publishEvent        EventPublisher
-	extensionRunner     ExtensionsRunner
-	releaseManager      release.Manager
-	tabBarOffset        int
-	rightInset          int
-	tabsClickCallback   func(int) bool
-	tabBarHeight        int
-	workspacesBarFrame  bool
-	workspacesBarHeight int
-	workspacesIcon      rune
-	workspacesBarOffset int
-	locker              sync.Locker
-	dispatchOnPreview   map[string]previewFunc
-	extensions          map[string]Extension
-	schemes             map[string]schemeapi.SchemeFunc
-	workspaceConfig     string
-	defaultWallpaper    browser.Wallpaper
-	defaultConfig       string
-	bell                func()
-	scheduleFn          func(func()) bool
-	afterFunc           func(time.Duration, func()) *time.Timer
-	debugCommands       bool
-	streamingOpen       bool
+	publishEvent         EventPublisher
+	extensionRunner      ExtensionsRunner
+	releaseManager       release.Manager
+	tabBarOffset         int
+	rightInset           int
+	tabsClickCallback    func(int) bool
+	tabBarHeight         int
+	workspacesBarFrame   bool
+	workspacesBarHeight  int
+	workspacesIcon       rune
+	workspacesBarOffset  int
+	locker               sync.Locker
+	dispatchOnPreview    map[string]previewFunc
+	extensions           map[string]Extension
+	schemes              map[string]schemeapi.SchemeFunc
+	workspaceConfig      string
+	defaultWallpaper     browser.Wallpaper
+	defaultConfig        string
+	bell                 func()
+	scheduleFn           func(func()) bool
+	afterFunc            func(time.Duration, func()) *time.Timer
+	debugCommands        bool
+	streamingOpen        bool
+	disableSessionReopen bool
 
 	workspaceOpenCompleters []command.Completer
 

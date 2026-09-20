@@ -21,6 +21,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,8 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/api/textapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
+	"github.com/unstablebuild/rune-go-sdk/handler/repl"
+	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"unstable.build/rune/internal/extension/langext"
 	"unstable.build/rune/internal/handler/handlertest"
@@ -1414,4 +1417,41 @@ func requireClippy(t *testing.T) {
 	if err := exec.Command("cargo", "clippy", "--version").Run(); err != nil {
 		t.Skipf("cargo clippy unavailable: %v", err)
 	}
+}
+
+// TestE2E_ResolveSysroot drives the full extension bring-up against a
+// real rustc for a Cargo project, asserting the resolved toolchain
+// sysroot is carried into the language server's init params. It skips
+// when rustc is absent.
+func TestE2E_ResolveSysroot(t *testing.T) {
+	rustcPath := findRustc(t)
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\n"), 0o644))
+
+	// The sysroot probe execs the installation-owned rustc at
+	// <cargoHome>/bin/rustc, never a bare rustc, so point cargoHome at
+	// the directory holding the real rustc discovered on PATH.
+	cargoHome := filepath.Dir(filepath.Dir(rustcPath))
+
+	env := runRustExtensionOnDir(t, dir, "", cargoHome, t.TempDir())
+
+	params, count := env.lsp.captured()
+	require.Equal(t, 1, count, "the workspace-root crate must initialize exactly once")
+	var opts map[string]any
+	require.NoError(t, json.Unmarshal(params.InitializeOptions, &opts))
+	assert.NotEmpty(t, opts["sysroot"], "a real rustc must yield a non-empty sysroot")
+}
+
+// TestE2E_RustHandlerShow runs `rust show` against a real rustup.
+func TestE2E_RustHandlerShow(t *testing.T) {
+	findRustup(t)
+	dir := t.TempDir()
+	_, h := newRustHandler(newDirExecutor(dir), newFakeNotifications(), dir, "rustup", nil)
+	it, err := h.HandleCommand(context.Background(),
+		repl.Command{Name: "rust", Args: []string{"show"}}, repl.NopProgressWriter())
+	require.NoError(t, err)
+	out, err := iterator.ToSlice(context.Background(), it)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
 }

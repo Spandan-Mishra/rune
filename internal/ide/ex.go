@@ -111,8 +111,12 @@ type ex struct {
 	ed             text.Editor
 	editorObserver *commandRegisterObserver
 	parser         syntaxapi.Parser
-	wsExecutor     *workspaceshell.Executor
-	aliasExpander  *idecmd.Expander
+	svc            vctrl.Service
+	// gitshowSeq keeps a second :gitshow popup for the same file from
+	// colliding with one the user has not closed yet.
+	gitshowSeq    int
+	wsExecutor    *workspaceshell.Executor
+	aliasExpander *idecmd.Expander
 	// executor is a forwarding proxy: long-lived consumers (the
 	// CommandSubstResolver, plugin.New, the VTE) capture this value
 	// once and continue to route through whatever underlying
@@ -225,6 +229,7 @@ func newEx(
 	dispatchOnPreview map[string]previewFunc,
 	tm browser.TabManager,
 	parser syntaxapi.Parser,
+	svc vctrl.Service,
 	promptEditor command.Editor,
 	commandObserver commandObserver,
 	debugCommands bool,
@@ -236,6 +241,7 @@ func newEx(
 	opts ...text.Option,
 ) (e *ex, err error) {
 	e = new(ex)
+	e.svc = svc
 	err = e.init(edFactory, m, storage, notifications, uri,
 		emulatorConfig, pluginBarConfig, publishEvent, initialVTECapacity, clip, macro,
 		dispatchOnPreview, tm, parser, promptEditor, opts...)
@@ -288,6 +294,9 @@ func (e *ex) init(
 		return
 	}
 	e.parser = parser
+	if e.svc == nil {
+		e.svc = vctrl.NopService()
+	}
 	if emulatorConfig.ScheduleNextTick == nil {
 		panic("ide.ex: emulatorConfig.ScheduleNextTick must not be nil")
 	}
@@ -3271,4 +3280,96 @@ func (e *ex) keybindings(_ context.Context, _ ...string) error {
 		return err
 	}
 	return e.openMarkdownFloating(md, "Key bindings", keybindingsWidth)
+}
+
+func (e *ex) gitshow(ctx context.Context, _ ...string) error {
+	_, err := e.openGitshow(ctx)
+	return err
+}
+
+func (e *ex) openGitshow(ctx context.Context) (text.Handler, error) {
+	uri, h, ok := e.handlerInFocus()
+	if !ok {
+		return nil, errors.New("gitshow: no file in focus")
+	}
+	rel := workspaceapi.RelPath(e.workspaceURI, uri)
+	// The diff is computed against disk, so a dirty buffer would make
+	// the popup and the gutter marks describe different bytes.
+	if dirty, _ := e.comp.IsDirty(uri); dirty {
+		return nil, fmt.Errorf(
+			"gitshow: %s has unsaved changes; write it first", rel)
+	}
+	diff, err := e.svc.Diff(ctx, uri)
+	if err != nil {
+		return nil, fmt.Errorf("gitshow: diff %s: %w", rel, err)
+	}
+	content, err := readFile(e.workspace, uri)
+	if err != nil {
+		return nil, fmt.Errorf("gitshow: read %s: %w", rel, err)
+	}
+	hunks := vctrl.UnifiedHunks(diff, content, gitshowContextLines)
+	if len(hunks) == 0 {
+		// A service with nothing to report returns an empty FileDiff
+		// and no error, so this is the only place it surfaces.
+		return nil, fmt.Errorf("gitshow: no changes in %s", rel)
+	}
+
+	buf, anchors := vctrl.UnifiedBuffer(hunks, rel, rel)
+	// The real file URI, so snippets parse as the file's language
+	// rather than as a diff.
+	vctrl.HighlightSnippets(ctx, buf.RawCells(),
+		vctrl.UnifiedSnippets(hunks, anchors, uri), e.parser, gitshowGutter)
+
+	diffURI, err := e.gitshowURI(rel)
+	if err != nil {
+		return nil, fmt.Errorf("gitshow: %w", err)
+	}
+	edh, err := e.ed.Edit(text.WithBars(ctx, text.BarOptions{
+		DisableAuxBar:   true,
+		DisableIconsBar: true,
+		StatusBar: &text.StatusBarOverride{
+			Workspace:  gitshowBaseURI(),
+			GitService: gitshowService{Service: e.svc, file: uri, diff: diff},
+		},
+	}), diffURI, buf, true /* readOnly */, false)
+	if err != nil {
+		return nil, fmt.Errorf("gitshow: open editor: %w", err)
+	}
+
+	edh.SetLocationList(textapi.LocationPriorityInfo, gitshowLocationList,
+		textapi.LocationSlice(gitshowLocations(
+			hunks, anchors, gitshowLabel(ctx, e.svc, uri))))
+	edh.SetCursorAtScroll(term.Coordinates{
+		Y: anchors[gitshowSeek(hunks, h.CursorAtScroll().Y+1)].Row,
+	})
+
+	var win browser.Window
+	bhandler := browser.FuncHandler(
+		gitshowKeyHandler(edh, e.editorModeModal), func() error {
+			defer win.Close() //nolint:errcheck
+			return edh.Close()
+		})
+	win, err = e.comp.Floating(
+		browser.FuncFloating(bhandler, func() (int, int) {
+			w, height := edh.Dimensions()
+			// dimensions does not account for the row the editors
+			// draw the cursor's location message over.
+			return min(w, gitshowMaxWidth), height + 1
+		}),
+		browserapi.FloatingConfig{
+			Alignment: component.AlignmentCentered,
+			Title:     "git diff · " + rel,
+		})
+	if err != nil {
+		return nil, errors.Join(
+			fmt.Errorf("gitshow: open window: %w", err), edh.Close())
+	}
+	return edh, nil
+}
+
+func (e *ex) gitshowURI(rel string) (workspaceapi.URI, error) {
+	e.gitshowSeq++
+	joined := workspaceapi.Join(gitshowBaseURI(), rel+".diff")
+	return workspaceapi.ParseURI(
+		fmt.Sprintf("%s?n=%d", joined.String(), e.gitshowSeq))
 }

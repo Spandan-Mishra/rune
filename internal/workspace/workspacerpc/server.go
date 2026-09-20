@@ -24,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	log "github.com/sirupsen/logrus"
@@ -53,9 +54,14 @@ type Server struct {
 	ctx       context.Context
 	cancelCtx func()
 
-	s                 schemeapi.Scheme
-	mu                sync.Mutex // guards watchpoints
-	watchpoints       map[int]func()
+	s  schemeapi.Scheme
+	mu sync.Mutex // guards watchpoints
+	// watchpoints is keyed by ids this server hands out, not by the
+	// ids the scheme returns: a Watch rooted in a subdirectory goes
+	// through Chroot, and each chroot numbers its watchpoints from
+	// scratch, so scheme ids collide across streams.
+	watchpoints       map[int64]func()
+	nextWatchpoint    atomic.Int64
 	commandAuthorizer CommandAuthorizer
 }
 
@@ -92,7 +98,7 @@ func NewServer(
 func (s *Server) Init(scheme schemeapi.Scheme) {
 	s.s = scheme
 	s.ctx, s.cancelCtx = context.WithCancel(context.Background())
-	s.watchpoints = make(map[int]func())
+	s.watchpoints = make(map[int64]func())
 }
 
 // StartCommand satisfies ExecutorServer
@@ -671,16 +677,17 @@ func (s *Server) Watch(
 			return err
 		}
 	}
-	id, err := bfs.Watch(req.GetPath(), ch, events...)
+	schemeID, err := bfs.Watch(req.GetPath(), ch, events...)
 	if err != nil {
 		return err
 	}
+	id := s.nextWatchpoint.Add(1)
 	s.mu.Lock()
 	s.watchpoints[id] = cancel
 	s.mu.Unlock()
 
 	defer func() {
-		_ = bfs.StopWatch(id)
+		_ = bfs.StopWatch(schemeID)
 		s.mu.Lock()
 		delete(s.watchpoints, id)
 		s.mu.Unlock()
@@ -689,7 +696,7 @@ func (s *Server) Watch(
 	resp := workspacerpc.WatchMessage{
 		Type: workspacerpc.WatchMessage_TypeResponse,
 		Response: &workspacerpc.WatchResponse{
-			Id: int64(id),
+			Id: id,
 		}}
 	if err := stream.Send(&resp); err != nil {
 		return err
@@ -735,7 +742,7 @@ func (s *Server) Watch(
 func (s *Server) StopWatch(ctx context.Context, req *workspacerpc.StopWatchRequest) (
 	*workspacerpc.StopWatchResponse, error,
 ) {
-	id := int(req.GetId())
+	id := req.GetId()
 	s.mu.Lock()
 	cancel, ok := s.watchpoints[id]
 	delete(s.watchpoints, id)

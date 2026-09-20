@@ -43,6 +43,19 @@ func checkURIRelative(a, b workspaceapi.URI) error {
 	return nil
 }
 
+// URIUnderPrefix reports whether uri is prefix itself or a resource
+// nested under it. Unlike workspaceapi.HasPrefix it only matches on
+// path-segment boundaries, so a namespace like "memory:///gitshow"
+// does not swallow an unrelated "memory:///gitshowcase".
+func URIUnderPrefix(uri, prefix workspaceapi.URI) bool {
+	if uri.Scheme() != prefix.Scheme() ||
+		uri.Host() != prefix.Host() || uri.User() != prefix.User() {
+		return false
+	}
+	base := strings.TrimSuffix(prefix.Path(), "/")
+	return uri.Path() == base || strings.HasPrefix(uri.Path(), base+"/")
+}
+
 // DefaultSwapFile returns a file's default swap directory in the
 // local or remote workspace.
 func DefaultSwapFile(swapDir workspaceapi.URI, file workspaceapi.URI) (workspaceapi.URI, error) {

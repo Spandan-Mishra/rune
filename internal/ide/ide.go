@@ -669,6 +669,7 @@ func (i *IDE) init(
 	i.workspaceHandler.watchedFilesChangeHook = op.watchedFilesChangeHook
 	i.workspaceHandler.workspaceOpenCompleters = op.workspaceOpenCompleters
 	i.workspaceHandler.tutorialsInstalled = i.onTutorialsInstalled
+	i.workspaceHandler.sessionReopenDisabled = op.disableSessionReopen
 	i.workspaceHandler.onboardingActive = func() bool {
 		return op.startingTutorial != ""
 	}

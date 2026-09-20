@@ -516,7 +516,7 @@ func TestKeyBindingsEditorModeIntro(t *testing.T) {
 		mode string
 		want string
 	}{
-		{"modal", "https://docs.rune.build/learn/modal-editor"},
+		{"modal", "https://docs.rune.build/learn/vim-editor"},
 		{"standard", "https://docs.rune.build/learn/standard-editor"},
 		{"emacs", "https://docs.rune.build/learn/emacs-editor"},
 		{"exo", "consult its documentation for in-buffer key bindings"},
@@ -578,7 +578,7 @@ func TestKeyBindingsMacrosSection(t *testing.T) {
 		assert.Contains(t, md, "- `@{reg}`: Play register `{reg}`")
 		assert.Contains(t, md, "- `@@`: Replay the last played register")
 		assert.Contains(t, md, "echo {register}a")
-		assert.Contains(t, md, "https://docs.rune.build/learn/modal-editor#macros")
+		assert.Contains(t, md, "https://docs.rune.build/learn/vim-editor#macros")
 
 		macros := strings.Index(md, "## Macros")
 		other := strings.Index(md, "## Other")

@@ -33,6 +33,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/api/browserapi"
 	"github.com/unstablebuild/rune-go-sdk/api/config"
 	"github.com/unstablebuild/rune-go-sdk/api/storageapi"
+	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"github.com/unstablebuild/rune-go-sdk/clipboard"
 	"github.com/unstablebuild/rune-go-sdk/component"
 	sdkhandler "github.com/unstablebuild/rune-go-sdk/handler"
@@ -126,7 +127,6 @@ func newBootstrapHandler(
 	bh.rootCfg = rootCfg
 
 	if isBootstrapped(dataDir) {
-		migrateBootstrappedConfig(configPath)
 		client, releaseManager := newAPIClient(bh.storage, installBackupDir, rootCfg)
 		bh.network = newNetwork(rootCfg, dataDir, newNetworkGate(client))
 		bh.network.startAutoJoin()
@@ -248,6 +248,9 @@ func (b *bootstrapHandler) buildConfiguredIDE(
 	if debug.DebugBuild == "true" {
 		opts = append(opts, ide.WithDebugCommands(true))
 	}
+	if *flagNoSessionReopen {
+		opts = append(opts, ide.WithoutSessionReopen())
+	}
 	opts = append(opts,
 		ide.WithReleaseManager(releaseManager),
 		nagPromptOption(client),
@@ -349,6 +352,26 @@ func (b *bootstrapHandler) dragObserver(ev gui.DragEvent) {
 		target.DragCancel()
 	case gui.DragDrop:
 		target.DragDrop(ev.Pos, ev.Paths)
+	}
+}
+
+// linkObserver opens a URL the user meta-clicked in the rendered frame.
+// Workspace files open in the editor; anything else goes to the system
+// browser.
+func (b *bootstrapHandler) linkObserver(u *url.URL) {
+	if u.Scheme == "file" {
+		uri, err := workspaceapi.ParseURI(u.String())
+		if err != nil {
+			b.notifyError("open link", err)
+			return
+		}
+		if err := b.currentIDE().Open(uri); err != nil {
+			b.notifyError("open link", err)
+		}
+		return
+	}
+	if err := b.openBrowser(u); err != nil {
+		b.notifyError("open link", err)
 	}
 }
 
@@ -864,7 +887,7 @@ func (b *bootstrapHandler) openWelcomePrompt() {
 		"Learning a new editor is hard, and it can feel daunting at first. We've all been there. " +
 		"These first steps are designed to make that process easier, and we promise that once Rune starts to click, " +
 		"the payoff will be huge.\n\n" +
-		"If this text is too small, press " + metaKeySymbol() + " and `+` to make the font bigger; " +
+		"If this text is too small, press " + metaKeySymbol() + " and `=` to make the font bigger; " +
 		"if it's too big, press " + metaKeySymbol() + " and `-` to make it smaller."
 	guard := b.promptGuard()
 	b.preIDE.Prompt(

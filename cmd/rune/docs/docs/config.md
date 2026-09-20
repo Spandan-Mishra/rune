@@ -49,6 +49,58 @@ standard Starlark only, with no `load()`, no file I/O, and no environment
 access. A `config.star` that binds nothing (for example, a file with only
 comments) is treated as an empty overlay.
 
+## Applying config changes
+
+Rune does not watch the config file. Open it with `:config`, edit it, save it —
+nothing happens until you reload. There are two levels of reload.
+
+### `:workspacereload`
+
+`:workspacereload` closes the focused workspace and opens it again. The open
+buffers, cursor positions and window layout are restored, but everything the
+workspace owns is rebuilt from a fresh read of your config file and the
+workspace's `.rune/config.yaml`. This is the fastest way to try out a change
+and covers most of the configuration surface:
+
+- `editor.*`: mode, auto-save, tabspaces, comments, syntax size limits
+- `command.*`: prompt key, aliases, key bindings, history key, overlay
+- `syntax.*`, icons, frame and tab attributes, wallpaper
+- `terminal.*`, including the plugin bar
+- `extensions`: every extension process is stopped and started again
+- `debugger.*` adapters and language-server settings
+- `workspace.symbol_db` and extension auto-authorize settings
+
+Only the focused workspace is reloaded; other workspace tabs keep running with
+the configuration they were opened with.
+
+### Restart
+
+Everything that belongs to the process or to the GUI window is built once at
+startup and needs a restart:
+
+- all `gui.*` settings: fonts, themes, ligatures, opacity, blur,
+  scroll multiplier, key mapping, quick menu, `gui.env`
+- `log.output_path` and `log.level`
+- `models.*` (the LLM router), `notifications.*`, `telemetry.*`
+- `animations.*`, `workspace.home`, clipboard and macro settings
+- the configuration of the home screen shown when no workspace is open
+
+Some `gui.*` values can be changed for the current session with commands such
+as `guitheme`, `guifont`, `guifontsize` and `guiopacity`. Those changes are
+transient: write the corresponding key to your config file to make them
+permanent.
+
+You do not have to quit to try a `gui.*` change, though: `guiwindownew` spawns
+a second Rune process in its own OS window, and that process reads the config
+file from scratch. The new window comes up with your edited `gui.*` settings
+while the current one keeps running, which makes it a convenient way to test
+fonts, themes and window settings. Everything else in the restart list is
+per-process too, so the new window picks those up as well.
+
+Installing a package is the one case where config is applied without a reload:
+`gui.env` variables, newly added extensions and newly added tutorials are
+picked up live. If a package changes anything else, Rune tells you to restart.
+
 ## Editor Modes
 
 Rune ships with three built-in editors and supports running any terminal
@@ -67,19 +119,19 @@ editor:
 
 The four supported configurations are:
 
-### Modal
+### Vim
 
 A vi-style editor with modes, motions, operators, text objects,
 marks, registers, and macros. Pick this if your muscle memory comes
 from Vim or Neovim.
 
-See the [Modal Editor cheatsheet](./learn/modal-editor.md) for the
+See the [Vim Editor cheatsheet](./learn/vim-editor.md) for the
 exact keystrokes and what is or isn't supported.
 
 There is no ex command mode: in Rune the `:` prompt is the global
 [command prompt](#command-prompt), not a vi-internal one, so
 `:s/foo/bar/g`, `:g/pattern/`, and similar ex commands are not part
-of the editor. Modal is not a 100% Vim/Neovim port either; if you
+of the editor. The vim preset is not a 100% Vim/Neovim port either; if you
 rely on vimscript or the long tail of plugins, use [Exoeditor](#exoeditor)
 with `vim` or `nvim` instead.
 
@@ -167,6 +219,24 @@ the editor you chose:
 For ready-to-copy `exo` configs (Vim, Neovim, Helix, Nano, and more), see the
 [examples in the Exoeditor guide](./learn/exoeditor.md#examples).
 
+## Syntax Highlighting
+
+- `editor.highlights`: the attributes applied to each Tree-sitter capture
+  name, merged key by key onto Rune's defaults. See
+  [Syntax Highlighting](./learn/syntax-highlighting.md).
+
+  ```yaml tab
+  editor:
+    highlights:
+      comment:
+        fg: silver
+        flags: italic
+  ```
+
+  ```python tab
+  config["editor"]["highlights"]["comment"] = {"fg": "silver", "flags": "italic"}
+  ```
+
 ## Command Prompt
 
 - `command.key`: the [key combination](./learn/key-syntax.md) that opens the
@@ -187,7 +257,7 @@ For ready-to-copy `exo` configs (Vim, Neovim, Helix, Nano, and more), see the
   },
   ```
 
-  A bare printable key like `:` only works with [Modal](#modal)
+  A bare printable key like `:` only works with [Vim](#vim)
   editing, where the editor distinguishes a normal mode from an insert
   mode and the command key is bound outside insert mode. With
   [Standard](#standard) editing the editor always treats the next

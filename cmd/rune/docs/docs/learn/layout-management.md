@@ -276,7 +276,7 @@ These are the shipped preset assignments. Every layout binding lives in
 `command.key_bindings`, so you can remap it (see [Rebinding](#rebinding)). Run
 `cheatsheet` to see the bindings active in your configuration.
 
-### Modal
+### Vim
 
 | Command | Binding |
 | --- | --- |

@@ -14,8 +14,8 @@ In the keys below, `<meta>` is {{.MetaKey}}.
 {{- if eq .EditorMode "modal"}}
 
 These are your command key bindings. In-buffer editing keys come from the
-modal editor and are documented in the
-[modal editor guide](https://docs.rune.build/learn/modal-editor).
+vim editor and are documented in the
+[vim editor guide](https://docs.rune.build/learn/vim-editor).
 {{- else if eq .EditorMode "standard"}}
 
 These are your command key bindings. In-buffer editing keys come from the
@@ -55,7 +55,7 @@ In normal mode:
 A recorded macro is stored in a plain register, so you can bind it to a
 key or wrap it in an alias with the `echo` command's `{register}`
 instruction, for example `echo {register}a`. See the
-[modal editor guide](https://docs.rune.build/learn/modal-editor#macros)
+[vim editor guide](https://docs.rune.build/learn/vim-editor#macros)
 for recording examples.
 {{- else if eq .EditorMode "standard"}}
 

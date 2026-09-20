@@ -110,8 +110,8 @@ func TestCheatsheetEditorSection(t *testing.T) {
 
 	modal, err := renderCheatsheet(cfg, true, "modal", false)
 	require.NoError(t, err)
-	assert.Contains(t, modal, "**modal** editor")
-	assert.Contains(t, modal, "https://docs.rune.build/learn/modal-editor")
+	assert.Contains(t, modal, "**vim** editor")
+	assert.Contains(t, modal, "https://docs.rune.build/learn/vim-editor")
 	assert.NotContains(t, modal, "exo")
 
 	standard, err := renderCheatsheet(cfg, false, "standard", false)
@@ -193,12 +193,12 @@ func TestOpenCheatsheetLink(t *testing.T) {
 	}
 
 	for _, scheme := range []string{"http", "https"} {
-		u := &url.URL{Scheme: scheme, Host: "docs.rune.build", Path: "/learn/modal-editor"}
+		u := &url.URL{Scheme: scheme, Host: "docs.rune.build", Path: "/learn/vim-editor"}
 		assert.True(t, openCheatsheetLink(u), "%s link must be handled", scheme)
 	}
 	assert.Equal(t, []string{
-		"http://docs.rune.build/learn/modal-editor",
-		"https://docs.rune.build/learn/modal-editor",
+		"http://docs.rune.build/learn/vim-editor",
+		"https://docs.rune.build/learn/vim-editor",
 	}, opened)
 
 	opened = nil

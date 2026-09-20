@@ -902,6 +902,344 @@ func TestCommandHandlerBackspacePreservesRemoteWorkspaceURI(t *testing.T) {
 	}
 }
 
+// newLineEditingPrompt builds a prompt with a completer that never
+// suggests anything, so every assertion below is about the literal
+// text the user typed rather than about completion.
+func newLineEditingPrompt(t *testing.T, commands []string) *Prompt {
+	t.Helper()
+	cfg := testDefaultConfig()
+	cfg.ShowManual = false
+	cfg.Sync = true
+
+	completeFn, cleanupComplete := nopComplete()
+	t.Cleanup(func() { cleanupComplete(t) })
+	dispatchFn, cleanupDispatch := nopDispatch()
+	t.Cleanup(func() { cleanupDispatch(t) })
+
+	b := NewPrompt(
+		storagestub.NewInMemoryService(),
+		FuncCompleter(completeFn), FuncDispatcher(dispatchFn),
+		term.NopInterrupter(), testNoManualCommands(commands), cfg,
+	)
+	t.Cleanup(func() { _ = b.Close() })
+	return b
+}
+
+func feedKeys(t *testing.T, b *Prompt, sequence string) (quit, handled bool) {
+	t.Helper()
+	keys, err := term.ParseKeys(sequence)
+	require.NoError(t, err)
+	h := testCommandHandler{b}
+	for _, key := range keys {
+		q, ok := h.Handle(term.Event{
+			Type: term.EventKey,
+			Ch:   key.Ch,
+			Mod:  key.Mod,
+			Key:  key.Key,
+		})
+		quit = quit || q
+		handled = ok
+	}
+	return
+}
+
+// TestCommandPromptLineEditing covers the shell-style editing keys
+// (<c-w>, <c-h>, <c-backspace>, <a-backspace> and <c-u>) alongside
+// plain <backspace>, which they share a deletion primitive with. The
+// assertions pin all four pieces of prompt state at once because word
+// deletion can walk backwards across the argument boundary and unwind
+// the completion stack.
+func TestCommandPromptLineEditing(t *testing.T) {
+	tsuite := []struct {
+		desc string
+		// commands seeds the command list; the first token typed in a
+		// sequence is completed against it on <space>.
+		commands []string
+		// width resizes the prompt when non-zero so that sequences
+		// longer than the prompt wrap on screen.
+		width     int
+		sequence  string
+		wantBuf   string
+		wantToken string
+		wantArgs  []string
+		wantMode  commandPromptMode
+		wantQuit  bool
+	}{
+		// empty prompt
+		{desc: "c-w on an empty prompt is a no-op",
+			commands: []string{"edit"}, sequence: "<c-w>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "c-u on an empty prompt is a no-op",
+			commands: []string{"edit"}, sequence: "<c-u>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "c-w on an empty prompt with no commands is a no-op",
+			commands: nil, sequence: "<c-w>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "backspace on an empty prompt still closes the prompt",
+			commands: []string{"edit"}, sequence: "<backspace>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}, wantQuit: true},
+		{desc: "c-w draining the line does not close the prompt",
+			commands: []string{"edit"}, sequence: "edi<c-w><c-w>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+
+		// command mode
+		{desc: "c-w deletes a partially typed command",
+			commands: []string{"edit"}, sequence: "edi<c-w>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "c-u deletes a partially typed command",
+			commands: []string{"edit"}, sequence: "edi<c-u>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "backspace deletes one cell of a partially typed command",
+			commands: []string{"edit"}, sequence: "edi<backspace>",
+			wantBuf: "ed", wantToken: "ed", wantArgs: []string{}},
+
+		// argument mode
+		{desc: "c-w deletes the argument and stops at the separator",
+			commands: []string{"edit"}, sequence: "edit<space>foo<c-w>",
+			wantBuf: "edit ", wantToken: "", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "backspace deletes one cell of the argument",
+			commands: []string{"edit"}, sequence: "edit<space>foo<backspace>",
+			wantBuf: "edit fo", wantToken: "fo", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w crossing the separator unwinds to command mode",
+			commands: []string{"edit"}, sequence: "edit<space>foo<c-w><c-w>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "c-w unwinds one completed argument at a time",
+			commands: []string{"edit"}, sequence: "edit<space>one<space>two<c-w>",
+			wantBuf: "edit one ", wantToken: "", wantArgs: []string{"edit", "one"}, wantMode: 2},
+		{desc: "c-w deletes the separator together with the preceding argument",
+			commands: []string{"edit"}, sequence: "edit<space>one<space>two<c-w><c-w>",
+			wantBuf: "edit ", wantToken: "", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-u clears every completed argument",
+			commands: []string{"edit"}, sequence: "edit<space>one<space>two<c-u>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "c-u clears a half-typed argument",
+			commands: []string{"edit"}, sequence: "edit<space>src/main<c-u>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+
+		// path components
+		{desc: "c-w walks back one path component",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb/ccc<c-w>",
+			wantBuf: "edit a/bb/", wantToken: "a/bb/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "repeated c-w walks back each path component",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb/ccc<c-w><c-w>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w on a trailing slash removes it with the component before it",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb/<c-w>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w drains a whole path one component per press",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb/ccc<c-w><c-w><c-w>",
+			wantBuf: "edit ", wantToken: "", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w keeps a scheme prefix intact until its own press",
+			commands:  []string{"workspaceopen"},
+			sequence:  "workspaceopen<space>ssh://host/src/rune<c-w>",
+			wantBuf:   "workspaceopen ssh://host/src/",
+			wantToken: "ssh://host/src/",
+			wantArgs:  []string{"workspaceopen"}, wantMode: 1},
+
+		// wrapped input
+		{desc: "c-w operates on logical cells when the line wraps on screen",
+			commands: []string{"edit"}, width: 12,
+			sequence: "edit<space>aaaa/bbbb/cccc<c-w>",
+			wantBuf:  "edit aaaa/bbbb/", wantToken: "aaaa/bbbb/",
+			wantArgs: []string{"edit"}, wantMode: 1},
+
+		// quoting
+		{desc: "c-w stops at an escaped space inside one argument",
+			commands: []string{"edit"}, sequence: `edit<space>my\\<space>file<c-w>`,
+			wantBuf: `edit my\ `, wantToken: `my\ `,
+			wantArgs: []string{"edit"}, wantMode: 1},
+
+		// wide and non-alphanumeric runes
+		{desc: "c-w deletes an ascii extension without splitting wide runes",
+			commands: []string{"edit"}, sequence: "edit<space>世界.txt<c-w>",
+			wantBuf: "edit 世界.", wantToken: "世界.",
+			wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w treats wide letters as word runes",
+			commands: []string{"edit"}, sequence: "edit<space>世界.txt<c-w><c-w>",
+			wantBuf: "edit ", wantToken: "", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w deletes a precomposed accent with its word",
+			commands: []string{"edit"}, sequence: "edit<space>a/café<c-w>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w deletes a decomposed accent with its word",
+			commands: []string{"edit"}, sequence: "edit<space>a/cafe\u0301<c-w>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w treats a zwj emoji cluster as one separator",
+			commands: []string{"edit"}, sequence: "edit<space>ab\U0001F468\u200D\U0001F4BB<c-w>",
+			wantBuf: "edit ", wantToken: "", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w skips a trailing emoji before deleting the word",
+			commands: []string{"edit"}, sequence: "edit<space>ab🙂<c-w>",
+			wantBuf: "edit ", wantToken: "", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "c-w on only separators keeps deleting into the previous word",
+			commands: []string{"edit"}, sequence: "edit<space>🙂<c-w>",
+			wantBuf: "", wantToken: "", wantArgs: []string{}},
+		{desc: "c-w keeps digits and underscores in the same word",
+			commands: []string{"edit"}, sequence: "edit<space>a/my_file2<c-w>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+
+		// alternate bindings
+		{desc: "alt-backspace deletes a word",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb<a-backspace>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "ctrl-backspace deletes a word",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb<c-backspace>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "ctrl-h deletes a word for terminals that collapse ctrl-backspace",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb<c-h>",
+			wantBuf: "edit a/", wantToken: "a/", wantArgs: []string{"edit"}, wantMode: 1},
+
+		// retyping after a deletion
+		{desc: "typing resumes on the argument left behind by c-w",
+			commands: []string{"edit"}, sequence: "edit<space>a/bb/ccc<c-w>dd",
+			wantBuf: "edit a/bb/dd", wantToken: "a/bb/dd",
+			wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "typing resumes on the argument restored by c-w unwinding",
+			commands: []string{"edit"}, sequence: "edit<space>one<space>two<c-w><c-w>x",
+			wantBuf: "edit x", wantToken: "x", wantArgs: []string{"edit"}, wantMode: 1},
+		{desc: "typing resumes in command mode after c-u",
+			commands: []string{"edit"}, sequence: "edit<space>one<c-u>ed",
+			wantBuf: "ed", wantToken: "ed", wantArgs: []string{}},
+	}
+
+	for _, tcase := range tsuite {
+		t.Run(tcase.desc, func(t *testing.T) {
+			b := newLineEditingPrompt(t, tcase.commands)
+			if tcase.width != 0 {
+				b.Resize(tcase.width, 10)
+			}
+
+			quit, handled := feedKeys(t, b, tcase.sequence)
+
+			assert.True(t, handled, "last key must not leak to the ide")
+			assert.Equal(t, tcase.wantQuit, quit, "quit")
+			assert.Equal(t, tcase.wantBuf, b.buf.String(), "prompt buffer")
+			assert.Equal(t, tcase.wantToken, b.list.Buffer().String(), "completion token")
+			assert.Equal(t, tcase.wantArgs,
+				append([]string{}, b.commandAndArgs...), "completed args")
+			assert.Equal(t, tcase.wantMode, b.mode, "prompt mode")
+		})
+	}
+}
+
+// TestCommandPromptLineEditingDispatch asserts that a line repaired
+// with the editing keys dispatches the arguments the prompt displays,
+// i.e. that the buffer and the completion stack stay in agreement.
+func TestCommandPromptLineEditingDispatch(t *testing.T) {
+	tsuite := []struct {
+		desc     string
+		commands []string
+		sequence string
+		dispatch func() (func(string, ...string) bool, func(*testing.T))
+	}{
+		{"retyped path component after c-w",
+			[]string{"edit"}, "edit<space>src/mian<c-w>main.go<enter>",
+			expectDispatch("edit", "src/main.go")},
+		{"argument replaced after c-w unwinding",
+			[]string{"edit"}, "edit<space>one<space>two<c-w><c-w>three<enter>",
+			expectDispatch("edit", "three")},
+		{"command retyped after c-u",
+			[]string{"edit", "quit"}, "edit<space>one<c-u>quit<enter>",
+			expectDispatch("quit")},
+		{"alt-backspace correction",
+			[]string{"edit"}, "edit<space>a/bb<a-backspace>cc<enter>",
+			expectDispatch("edit", "a/cc")},
+	}
+
+	for _, tcase := range tsuite {
+		t.Run(tcase.desc, func(t *testing.T) {
+			cfg := testDefaultConfig()
+			cfg.ShowManual = false
+			cfg.Sync = true
+
+			completeFn, cleanupComplete := nopComplete()
+			defer cleanupComplete(t)
+			dispatchFn, cleanupDispatch := tcase.dispatch()
+			defer cleanupDispatch(t)
+
+			b := NewPrompt(
+				storagestub.NewInMemoryService(),
+				FuncCompleter(completeFn), FuncDispatcher(dispatchFn),
+				term.NopInterrupter(), testNoManualCommands(tcase.commands), cfg,
+			)
+			defer b.Close()
+
+			feedKeys(t, b, tcase.sequence)
+		})
+	}
+}
+
+// TestCommandPromptLineEditingInEditMode pins that the editing keys
+// are only the prompt's own fallback: while the modal edit session is
+// active every one of them belongs to the spawned editor.
+func TestCommandPromptLineEditingInEditMode(t *testing.T) {
+	var seen []term.Event
+	cfg := testDefaultConfig()
+	cfg.ShowManual = false
+	cfg.Sync = true
+	cfg.Editor = stubEditorImpl{seen: &seen}
+
+	completeFn, cleanupComplete := nopComplete()
+	defer cleanupComplete(t)
+	dispatchFn, cleanupDispatch := nopDispatch()
+	defer cleanupDispatch(t)
+
+	b := NewPrompt(
+		storagestub.NewInMemoryService(),
+		FuncCompleter(completeFn), FuncDispatcher(dispatchFn),
+		term.NopInterrupter(), testNoManualCommands([]string{"edit"}), cfg,
+	)
+	defer b.Close()
+
+	feedKeys(t, b, "edit<shift-esc><c-w><c-u><a-backspace><c-backspace>")
+
+	require.Len(t, seen, 4)
+	assert.Equal(t, []term.Event{
+		{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'w'},
+		{Type: term.EventKey, Mod: term.ModCtrl, Ch: 'u'},
+		{Type: term.EventKey, Mod: term.ModAlt, Key: term.KeyBackspace},
+		{Type: term.EventKey, Mod: term.ModCtrl, Key: term.KeyBackspace},
+	}, seen)
+}
+
+// TestCommandPromptWordDeleteKeepsHistoryEntries pins the one place
+// where word deletion deliberately diverges from <backspace>: while
+// scrolling history-backed argument suggestions, <backspace> removes
+// the focused entry from history, whereas <c-w> must only edit text.
+func TestCommandPromptWordDeleteKeepsHistoryEntries(t *testing.T) {
+	cfg := testDefaultConfig()
+	cfg.ShowManual = false
+	cfg.Sync = true
+
+	completeFn, cleanupComplete := nopComplete()
+	defer cleanupComplete(t)
+
+	b := NewPrompt(
+		storagestub.NewInMemoryService(),
+		FuncCompleter(completeFn),
+		FuncDispatcher(func(string, ...string) bool { return true }),
+		term.NopInterrupter(), testNoManualCommands([]string{"edit"}), cfg,
+	)
+	defer b.Close()
+
+	feedKeys(t, b, "edit<space>src/main.go<enter>")
+	require.Equal(t, []string{"edit src/main.go"}, b.history.Slice())
+
+	// re-enter argument mode so the history-backed suggestion is
+	// focused, which is what arms the removal path.
+	armHistoryFocus := func() {
+		feedKeys(t, b, "edit<space><down>")
+		require.True(t, b.completingWithHistory.Load())
+		require.True(t, b.userScrolling)
+	}
+
+	armHistoryFocus()
+	feedKeys(t, b, "<c-w>")
+	assert.Equal(t, []string{"edit src/main.go"}, b.history.Slice())
+
+	armHistoryFocus()
+	feedKeys(t, b, "<backspace>")
+	assert.Empty(t, b.history.Slice())
+}
+
 // TestCommandHandlerCancelsCompletionBeforeDispatch ensures that the
 // active completion's context is canceled before the dispatcher runs
 // when the user presses Enter. This prevents an in-flight completion

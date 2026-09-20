@@ -61,6 +61,14 @@ var (
 			},
 			handler: (*ex).keybindings,
 		},
+		"gitshow": {
+			man: textapi.CommandManual{
+				Summary: "Show the focused file's diff against HEAD in a floating window, " +
+					"opened at the hunk nearest the cursor. The file must have no unsaved " +
+					"changes, since the diff describes what is on disk.",
+			},
+			handler: (*ex).gitshow,
+		},
 		"history": {
 			man: textapi.CommandManual{
 				Summary: "Open the command prompt showing previously executed commands.",

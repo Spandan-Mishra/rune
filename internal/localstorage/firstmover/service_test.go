@@ -264,36 +264,59 @@ func TestServiceIntegration(t *testing.T) {
 
 	t.Run("multiple instances", func(t *testing.T) {
 		doctest.TestDocumentServiceNoList(t, func(t *testing.T) document.Service {
-			const n = 100
+			const n = 8
 			cfg := testConfig()
 
 			lockFile := makeTempLockFile(t)
 			svc := bluestore.AdaptTo(document.NewInMemoryService())
 
-			instances := make([]*Service, 0, n)
-			for i := 0; i < n-1; i++ {
-				instance := New(factoryFor(svc), lockFile, cfg)
-				_ = instance.Get(context.Background(), lockFile, nil)
-				instances = append(instances, instance)
+			peers := make([]*Service, 0, n)
+			for range n {
+				peer := New(factoryFor(svc), lockFile, cfg)
+				_ = peer.Get(context.Background(), lockFile, nil)
+				peers = append(peers, peer)
 			}
-			ret := instances[len(instances)-1]
+			// The peer under test is never killed: the suite must
+			// observe a service that survives its leaders dying, not
+			// one that was closed under it.
+			ret, churn := peers[n-1], peers[:n-1]
 
-			go func() {
-				for i := 0; i < n-1; i++ {
-					time.Sleep(cfg.DialTimeout + cfg.ConnectRetryCadence)
-					for idx, instance := range instances {
-						if instance.IsLeader() {
-							_ = instance.Close()
-							if idx == len(instances)-1 {
-								instances = instances[:idx]
-							} else {
-								instances = append(instances[:idx], instances[idx+1:]...)
-							}
-							break
-						}
+			killLeader := func() {
+				for _, peer := range churn {
+					if peer.IsLeader() {
+						_ = peer.Close()
+						return
 					}
 				}
+			}
+			// Each suite case is over in milliseconds, so start it in
+			// the middle of a failover: its first calls must ride out
+			// the re-election. The ticker keeps the churn going for
+			// the longer cases.
+			killLeader()
+			stop := make(chan struct{})
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				ticker := time.NewTicker(cfg.DialTimeout + cfg.ConnectRetryCadence)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-stop:
+						return
+					case <-ticker.C:
+					}
+					killLeader()
+				}
 			}()
+			// Every peer must be gone before the next subtest starts:
+			// leaked swarms keep dialing and couping on their own lock
+			// files and starve the peers of the subtests that follow.
+			t.Cleanup(func() {
+				close(stop)
+				<-done
+				cleanupNodes(t, churn...)
+			})
 			return bluestore.AdaptFrom(ret)
 		})
 	})
@@ -485,16 +508,28 @@ func TestPartitionRoutesThroughRootLeader(t *testing.T) {
 	assert.Equal(t, "via-leader", got.A)
 }
 
+func TestPartitionWorksAfterLeaderFailoverWithoutGoodbye(t *testing.T) {
+	testHookSuppressBye.Store(true)
+	t.Cleanup(func() { testHookSuppressBye.Store(false) })
+	testPartitionWorksAfterLeaderFailover(t)
+}
+
 // TestPartitionWorksAfterLeaderFailover verifies that values written
 // to a partition on the original leader remain readable from the
 // same partition name after the follower takes leadership.
 func TestPartitionWorksAfterLeaderFailover(t *testing.T) {
+	testPartitionWorksAfterLeaderFailover(t)
+}
+
+func testPartitionWorksAfterLeaderFailover(t *testing.T) {
+	t.Helper()
 	lockFile := makeTempLockFile(t)
 	cfg := testConfig()
 	shared := storagestub.NewInMemoryService()
 	factory := factoryFor(shared)
 
 	leader := New(factory, lockFile, cfg)
+	t.Cleanup(func() { _ = leader.Close() })
 	leaderPart, err := leader.Partition("p")
 	require.NoError(t, err)
 	require.NoError(t, leaderPart.Set(context.Background(),

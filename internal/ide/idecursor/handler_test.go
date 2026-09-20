@@ -204,7 +204,7 @@ func TestHandleSkipsSkipListedURI(t *testing.T) {
 		workspaceURI: ws,
 		docID:        documentID(ws),
 		doc:          newHistoryDocument(ws),
-		skip:         map[string]struct{}{skipURI.String(): {}},
+		skip:         []workspaceapi.URI{skipURI},
 	}
 
 	// Seed the history with a real file so a subsequent jump would be
@@ -220,5 +220,40 @@ func TestHandleSkipsSkipListedURI(t *testing.T) {
 	for _, e := range h.doc.Entries {
 		assert.NotEqual(t, skipURI.String(), e.URI,
 			"file explorer pseudo-URI must not be recorded in cursor history")
+	}
+}
+
+// TestHandleSkipsURIsUnderSkippedPrefix covers pseudo-buffers that mint a
+// resource per invocation, such as the :gitshow diff popup: the skip
+// entry names the namespace because the individual URIs cannot be
+// enumerated up front.
+func TestHandleSkipsURIsUnderSkippedPrefix(t *testing.T) {
+	ws, err := workspaceapi.ParseURI("file:///workspace")
+	require.NoError(t, err)
+	prefix, err := workspaceapi.ParseURI("memory:///gitshow")
+	require.NoError(t, err)
+	popup, err := workspaceapi.ParseURI("memory:///gitshow/a.go.diff?n=2")
+	require.NoError(t, err)
+	fileURI, err := workspaceapi.ParseURI("file:///workspace/a.go")
+	require.NoError(t, err)
+
+	h := &handler{
+		store:        storagestub.NewInMemoryService(),
+		workspaceURI: ws,
+		docID:        documentID(ws),
+		doc:          newHistoryDocument(ws),
+		skip:         []workspaceapi.URI{prefix},
+	}
+
+	h.Handle(context.Background(), textapi.Event{Type: textapi.EventTypeOpen, URI: fileURI})
+	h.Handle(context.Background(), textapi.Event{
+		Type: textapi.EventTypeCursor,
+		URI:  popup,
+		From: term.Coordinates{Y: 40},
+	})
+
+	for _, e := range h.doc.Entries {
+		assert.NotEqual(t, popup.String(), e.URI,
+			"a resource under a skipped namespace must not enter cursor history")
 	}
 }

@@ -182,6 +182,12 @@ type workspaceManagerHandler struct {
 	lastSession   idehistory.Session
 	reopenPending bool
 
+	// sessionReopenDisabled suppresses the reopen prompt entirely. It
+	// is set for instances spawned as secondary OS windows, which share
+	// the storage of the instance that spawned them and must not reopen
+	// its workspaces.
+	sessionReopenDisabled bool
+
 	packageConfigMergeHook func(idepkg.ConfigMergeEvent) (idepkg.ConfigMergeResult, error)
 
 	watchedFilesChangeHook func(int)
@@ -690,6 +696,7 @@ func (h *workspaceManagerHandler) init(
 		cfg.terminalConfig(), cfg.pluginBarConfig(),
 		h.events.newPublisher(h.homeURI), 0 /* vte capacity */, h.clip, h.macro,
 		h.dispatchOnPreview, tm, homeParser,
+		vctrl.NopService(),
 		h.newPromptEditor(cfg), h.commandObserver, h.debugCommands,
 		cfg.commandPromptCfg(),
 		cfg.pkgEditorMode() == editorModeModal,
@@ -778,12 +785,14 @@ func (h *workspaceManagerHandler) init(
 
 	// Read the previous session before any workspace install can
 	// overwrite the document with the current one.
-	lastSession, loadErr := h.state.LoadLastSession(ctx)
-	if loadErr != nil {
-		log.Warnf("load last session: %v", loadErr)
+	if !h.sessionReopenDisabled {
+		lastSession, loadErr := h.state.LoadLastSession(ctx)
+		if loadErr != nil {
+			log.Warnf("load last session: %v", loadErr)
+		}
+		h.lastSession = lastSession
+		h.reopenPending = len(h.lastSession.Workspaces) > 0
 	}
-	h.lastSession = lastSession
-	h.reopenPending = len(h.lastSession.Workspaces) > 0
 
 	// best effort
 	user, err := user.Current()
@@ -1851,6 +1860,7 @@ func (h *workspaceManagerHandler) buildWorkspaceAsync(
 		cfg.terminalConfig(), cfg.pluginBarConfig(), h.events.newPublisher(uri),
 		h.initialVTECapacity, h.clip, h.macro, h.dispatchOnPreview,
 		tm, wsParser,
+		vctrlService,
 		h.newPromptEditor(cfg), h.commandObserver, h.debugCommands,
 		cfg.commandPromptCfg(),
 		cfg.pkgEditorMode() == editorModeModal,
@@ -1877,7 +1887,7 @@ func (h *workspaceManagerHandler) buildWorkspaceAsync(
 	cursorHistoryCloser, err := idecursor.WithHistory(
 		ex.Editor(), h.ideStorage, apibrowser, apibrowser, ex.workspace,
 		wsParser, visibleManager, uri,
-		h.scheduleNextTick, fexURI,
+		h.scheduleNextTick, fexURI, gitshowBaseURI(),
 	)
 	if err != nil {
 		if symbolDBCloser != nil {
@@ -2093,7 +2103,8 @@ func (h *workspaceManagerHandler) installPendingWorkspace(
 	}
 	fexplorerURI, _ := workspaceapi.ParseURI(fileExplorerURI)
 	wh.historyCloser = h.state.SubscribeEvents(
-		ctx, uri, &ex.comp, exSnapshotter{ex: ex, wh: wh}, fexplorerURI)
+		ctx, uri, &ex.comp, exSnapshotter{ex: ex, wh: wh},
+		fexplorerURI, gitshowBaseURI())
 	// The name identifies the workspace rather than its contents, so it
 	// comes back whether or not the session itself is restored.
 	if state.Name != "" {

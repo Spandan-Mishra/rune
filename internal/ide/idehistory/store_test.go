@@ -378,7 +378,7 @@ func TestTrackPersistsOnEditorEvents(t *testing.T) {
 		snap:  stubSnapshotter{},
 		ctx:   context.Background(),
 		files: make(map[string]File),
-		skip:  map[string]struct{}{},
+		skip:  nil,
 	}
 
 	// Open: persists.
@@ -439,7 +439,7 @@ func TestTrackDropsSkippedURIEvents(t *testing.T) {
 		snap:  stubSnapshotter{},
 		ctx:   context.Background(),
 		files: make(map[string]File),
-		skip:  map[string]struct{}{skippedURI.String(): {}},
+		skip:  []workspaceapi.URI{skippedURI},
 	}
 	tr.Handle(context.Background(), textapi.Event{
 		Type: textapi.EventTypeOpen,
@@ -449,6 +449,42 @@ func TestTrackDropsSkippedURIEvents(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, state.Files,
 		"skip-listed URI must not enter persisted state")
+}
+
+// TestTrackDropsURIsUnderSkippedPrefix covers pseudo-buffers that mint a
+// resource per invocation, such as the :gitshow diff popup. Their URIs
+// cannot be enumerated up front, so the skip entry names the namespace
+// and every resource under it must stay out of the persisted state —
+// otherwise a reload tries to reopen a buffer that was never a file.
+func TestTrackDropsURIsUnderSkippedPrefix(t *testing.T) {
+	store := New(newCountingStorage())
+	uri := mustURI(t, "memory:///explorer")
+
+	tr := &tracker{
+		store: store,
+		uri:   uri,
+		snap:  stubSnapshotter{},
+		ctx:   context.Background(),
+		files: make(map[string]File),
+		skip:  []workspaceapi.URI{mustURI(t, "memory:///gitshow")},
+	}
+	tr.Handle(context.Background(), textapi.Event{
+		Type: textapi.EventTypeOpen,
+		URI:  mustURI(t, "memory:///gitshow/a/b.go.diff?n=2"),
+	})
+	state, err := store.LoadWorkspaceState(context.Background(), uri)
+	require.NoError(t, err)
+	assert.Empty(t, state.Files,
+		"a resource under a skipped namespace must not be persisted")
+
+	tr.Handle(context.Background(), textapi.Event{
+		Type: textapi.EventTypeOpen,
+		URI:  mustURI(t, "memory:///gitshowcase/a.go"),
+	})
+	state, err = store.LoadWorkspaceState(context.Background(), uri)
+	require.NoError(t, err)
+	assert.Len(t, state.Files, 1,
+		"a sibling that merely shares a textual prefix must still be tracked")
 }
 
 // oldMaxMessageSize is firstmover's historical gRPC frame cap. A workspace

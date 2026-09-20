@@ -17,6 +17,7 @@
 package gui
 
 import (
+	"net/url"
 	"sync"
 
 	ebiten "github.com/hajimehoshi/ebiten/v2"
@@ -258,6 +259,19 @@ func WithDragObserver(observer func(DragEvent)) Option {
 	return func(g *GUI) error {
 		if observer != nil {
 			g.drag.observer = observer
+		}
+		return nil
+	}
+}
+
+// WithLinkObserver installs a callback invoked when a URL rendered in the
+// frame is clicked while the meta modifier is held. It runs on the GUI
+// loop goroutine, in the same context as handler events. A nil observer
+// is ignored.
+func WithLinkObserver(observer func(*url.URL)) Option {
+	return func(g *GUI) error {
+		if observer != nil {
+			g.links.observer = observer
 		}
 		return nil
 	}

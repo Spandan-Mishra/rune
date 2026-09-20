@@ -2,9 +2,9 @@
 sidebar_position: 10
 ---
 
-# Modal Editor
+# Vim Editor
 
-A vi-style cheatsheet for Rune's modal editor. The motion grammar,
+A vi-style cheatsheet for Rune's vim editor. The motion grammar,
 operators, text objects, marks, registers, and macros are all here.
 The `:` ex mode lives at the [Command Prompt](./command-prompt.md):
 same prompt, broader scope.
@@ -87,14 +87,14 @@ config["editor"]["modal"]["search_attr"] = attr(
 
 ## Windows and tabs
 
-### Modal layout management keybindings preset
+### Vim layout management keybindings preset
 
 When configuring Rune for the first time, we offer the ability to choose one of three
-presets. If you choose the modal preset, Rune extends the editor's `hjkl` directions to
+presets. If you choose the vim preset, Rune extends the editor's `hjkl` directions to
 window management, tabs, diagnostics, and Git changes. The same layout bindings apply on
 macOS and Linux.
 
-![Rune Modal editor preset default keybindings](https://assets.rune.build/images/modal-editor-keyboard-cheatsheet-v4.svg)
+![Rune Vim editor preset default keybindings](https://assets.rune.build/images/modal-editor-keyboard-cheatsheet-v4.svg)
 
 The tables below provide a copyable reference for the bindings shown in the
 diagram:
@@ -622,7 +622,7 @@ enclosing class, then the file. `zl` walks back in.
 
 There is no built-in `:` ex mode. Rune's command prompt handles the
 equivalent; see the [Command Prompt](./command-prompt.md) guide. The
-command prompt opens with `:` under the modal bootstrap default.
+command prompt opens with `:` under the vim bootstrap default.
 
 ## What's not here
 

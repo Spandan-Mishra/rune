@@ -5055,6 +5055,7 @@ func newTestWorkspaceManagerHandlerWithManagerMu(
 	extensions map[string]Extension, dir string,
 	onTabsClick func(int) bool,
 	shutdownShaderCfg shutdownShaderConfig,
+	prepare ...func(*workspaceManagerHandler),
 ) *testWorkspaceManagerHandler {
 	homeURI, err := workspaceapi.ParseURI("memory:///home")
 	require.NoError(t, err)
@@ -5125,6 +5126,9 @@ func newTestWorkspaceManagerHandlerWithManagerMu(
 		publish = func(term.Event) bool { return true }
 	}
 	m.tutorialsInstalled = func([]string) (bool, error) { return false, nil }
+	for _, fn := range prepare {
+		fn(m.workspaceManagerHandler)
+	}
 	err = m.workspaceManagerHandler.init(uri, homeURI, manager,
 		notiConfig, cfg, storage, dir, publish, runner, pkgtrust.NewStore(dir, nil), mu, extensions,
 		func() (ideConfig, error) { return cfg, nil },
@@ -8072,6 +8076,7 @@ func TestWorkspaceRootURI(t *testing.T) {
 // dataDir to a later handler.
 func newHandlerWithDataDir(
 	t *testing.T, dataDir string, uri *workspaceapi.URI,
+	prepare ...func(*workspaceManagerHandler),
 ) *testWorkspaceManagerHandler {
 	t.Helper()
 	cc := defaultConfigWithWrap(false)
@@ -8082,7 +8087,7 @@ func newHandlerWithDataDir(
 		workspace.NewMemoryScheme))
 	return newTestWorkspaceManagerHandlerWithManagerMu(t, manager, mu, drain,
 		uri, cc, FuncExtensionsRunner(testRunnerFn), nil, dataDir, nil,
-		nopShutdownShaderConfig())
+		nopShutdownShaderConfig(), prepare...)
 }
 
 // seedLastSession writes the last-session document a previous run would
@@ -8255,6 +8260,26 @@ func TestWorkspaceManagerReopensLastSession(t *testing.T) {
 		count := m.workspaceCount
 		m.mu.Unlock()
 		assert.Equal(t, 1, count)
+
+		require.NoError(t, m.Close())
+	})
+
+	t.Run("a secondary window makes no offer", func(t *testing.T) {
+		dataDir := t.TempDir()
+		seedLastSession(t, dataDir,
+			idehistory.SessionWorkspace{URI: uriA, Slot: 0},
+			idehistory.SessionWorkspace{URI: uriB, Slot: 1})
+
+		m := newHandlerWithDataDir(t, dataDir, &uriA,
+			func(h *workspaceManagerHandler) { h.sessionReopenDisabled = true })
+		m.quiesce()
+
+		assert.Equal(t, 0, floatingWindows(m),
+			"a window spawned from a running instance must not reopen its session")
+		m.mu.Lock()
+		_, installed := m.findInstalledSlot(uriB)
+		m.mu.Unlock()
+		assert.False(t, installed)
 
 		require.NoError(t, m.Close())
 	})

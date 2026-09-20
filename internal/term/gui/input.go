@@ -45,6 +45,10 @@ type input struct {
 	input       keysManager
 	keyMapping  map[ebiten.KeyEvent]ebiten.KeyEvent
 	modMapping  map[ebiten.KeyModifier]ebiten.KeyModifier
+	// metaDown tracks whether Meta/Super is held. It is derived from key
+	// transitions rather than ebiten.IsKeyPressed, which always reports
+	// false on GLFW desktop platforms.
+	metaDown bool
 }
 
 func newInput(fontManager *font.Manager) *input {
@@ -158,6 +162,8 @@ func (i *input) processEvents(dst []term.Event) []term.Event {
 			continue
 		}
 
+		i.trackMeta(ev)
+
 		if ev.Action == ebiten.KeyActionRelease {
 			continue
 		}
@@ -185,7 +191,18 @@ func (i *input) processEvents(dst []term.Event) []term.Event {
 
 		mod := ebitenModToTermMod(mods)
 
-		if base, shift, ok := keyToBaseAndShift(key); ok {
+		// A chord means the character the key produces under the layout the
+		// user selected; ev.Key only names the physical button, by its US
+		// position. A remap target is chosen by key enum and so is named that
+		// way, as is any key the platform reports no layout data for.
+		base, shift, ok := ev.Char, ev.ShiftChar, ev.Char != 0
+		if !ok || remapped {
+			base, shift, ok = keyEnumChars(key)
+		} else if shift == 0 {
+			shift = base
+		}
+
+		if ok {
 			// Plain and Shift-only text is layout- and input-method-dependent,
 			// so it is taken from the platform's own text commit rather than
 			// synthesized here. A remapped target has no such commit and must
@@ -232,6 +249,24 @@ func (i *input) isLayoutText(ev ebiten.InputEvent, mod term.Modifier) bool {
 		}
 	}
 	return false
+}
+
+// trackMeta keeps metaDown in sync with the platform's view of the
+// Meta/Super modifier. A transition of a meta key sets it directly; any
+// other key action carries the modifier mask the platform observed and
+// so resynchronizes a release that never reached the window.
+func (i *input) trackMeta(ev ebiten.InputEvent) {
+	switch ev.Key {
+	case ebiten.KeyMeta, ebiten.KeyMetaLeft, ebiten.KeyMetaRight:
+		i.metaDown = ev.Action != ebiten.KeyActionRelease
+	default:
+		i.metaDown = ev.Mods&ebiten.KeyModSuper != 0
+	}
+}
+
+// metaHeld reports whether the Meta/Super modifier is currently held.
+func (i *input) metaHeld() bool {
+	return i.metaDown
 }
 
 // claim records that a key action has already been turned into a terminal
@@ -292,9 +327,12 @@ func isModifierKey(key ebiten.Key) bool {
 	return false
 }
 
-// keyToBaseAndShift returns the base and shift characters for a
-// character-producing key. Returns false for non-character keys.
-func keyToBaseAndShift(key ebiten.Key) (base, shift rune, ok bool) {
+// keyEnumChars returns the base and shift characters GLFW's key enum names,
+// which is the US ASCII value of the key by definition. It is not what the
+// key produces under any other layout, so it serves only the keys the
+// platform reports no layout data for and key_mapping targets, which name a
+// physical key rather than a character. Returns false for non-character keys.
+func keyEnumChars(key ebiten.Key) (base, shift rune, ok bool) {
 	switch key {
 	case ebiten.KeyA:
 		return 'a', 'A', true

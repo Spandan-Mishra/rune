@@ -6,7 +6,7 @@ title: Exoeditor
 
 # Exoeditor <span className="badge badge--secondary" style={{fontSize: '0.5em', verticalAlign: 'middle'}}>Beta</span>
 
-Rune ships with three built-in editors: [`modal`](./modal-editor.md)
+Rune ships with three built-in editors: [`modal`](./vim-editor.md)
 (vi/vim-like), [`standard`](./standard-editor.md) (conventional), and
 [`emacs`](./emacs-editor.md). You can also run any terminal editor, including
 Vim, Neovim, Helix, Kakoune, Micro, Emacs `-nw`, and Nano, inside a

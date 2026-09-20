@@ -40,6 +40,7 @@ import (
 	sdkiterator "github.com/unstablebuild/rune-go-sdk/iterator"
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
+	"go.uber.org/goleak"
 	gomock "go.uber.org/mock/gomock"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/browser/browsertest"
@@ -80,6 +81,9 @@ type testFlusherCloser struct {
 	// (e.g. shorter) content, exercising stale-cursor handling.
 	reloadContent string
 	lastFlush     time.Time
+	// flushAsync, when set, supplies the channel Flush returns so a test
+	// can complete saves in an order of its choosing.
+	flushAsync func() <-chan error
 }
 
 func (t *testFlusherCloser) Close() error {
@@ -89,6 +93,9 @@ func (t *testFlusherCloser) Close() error {
 	return nil
 }
 func (t *testFlusherCloser) Flush(context.Context) (<-chan error, error) {
+	if t.flushAsync != nil {
+		return t.flushAsync(), nil
+	}
 	var err error
 	if t.flushFn != nil {
 		err = t.flushFn()
@@ -2828,6 +2835,196 @@ func TestReload(t *testing.T) {
 		require.True(t, ok)
 		assert.False(t, dirty)
 	})
+}
+
+// TestDirtyStateAfterFlush covers what an observer sees once a save settles.
+// The filesystem watcher asks whether a file has unflushed changes at exactly
+// that moment to decide between reloading it and prompting about a conflict,
+// so a tab that claims to be clean while the buffer differs from disk sends it
+// down the wrong branch and silently discards the user's work.
+func TestDirtyStateAfterFlush(t *testing.T) {
+	resource1, err := workspaceapi.ParseURI("file:///a")
+	require.NoError(t, err)
+
+	t.Run("a failed save leaves the tab dirty", func(t *testing.T) {
+		ctx := context.Background()
+		c, testLoader := newTestComponent(t, NopEditor())
+		win, err := c.Focus()
+		require.NoError(t, err)
+		var flushErr error
+		testLoader.flusherCloser = &testFlusherCloser{
+			flushFn: func() error { return flushErr },
+		}
+
+		h, err := c.OpenFileTab(resource1, true)
+		require.NoError(t, err)
+		require.NoError(t, win.SetContent(h))
+
+		ed, err := c.Editor(resource1)
+		require.NoError(t, err)
+		_, _, _ = ed.CellEditor().Edit(ctx, term.Coordinates{}, term.Coordinates{}, "ABC")
+		dirty, ok := c.IsDirty(resource1)
+		require.True(t, ok)
+		require.True(t, dirty)
+
+		flushErr = workspaceapi.ErrStaleData
+		require.ErrorIs(t, awaitErr(c.Flush(ctx, win)), workspaceapi.ErrStaleData)
+
+		dirty, ok = c.IsDirty(resource1)
+		require.True(t, ok)
+		assert.True(t, dirty, "a save that failed must not report the buffer as saved")
+	})
+
+	t.Run("an edit during a save leaves the tab dirty", func(t *testing.T) {
+		ctx := context.Background()
+		c, testLoader := newTestComponent(t, NopEditor())
+		win, err := c.Focus()
+		require.NoError(t, err)
+		var editDuringSave func()
+		testLoader.flusherCloser = &testFlusherCloser{
+			// The save writes the buffer as it was when the flush started; an
+			// edit that lands while the disk write is in flight is not in it.
+			flushFn: func() error {
+				editDuringSave()
+				return nil
+			},
+		}
+
+		h, err := c.OpenFileTab(resource1, true)
+		require.NoError(t, err)
+		require.NoError(t, win.SetContent(h))
+
+		ed, err := c.Editor(resource1)
+		require.NoError(t, err)
+		editDuringSave = func() {
+			_, _, _ = ed.CellEditor().Edit(ctx, term.Coordinates{}, term.Coordinates{}, "ABC")
+		}
+		require.NoError(t, awaitErr(c.Flush(ctx, win)))
+
+		dirty, ok := c.IsDirty(resource1)
+		require.True(t, ok)
+		assert.True(t, dirty, "an edit the save did not write must stay unflushed")
+	})
+
+	t.Run("saves that finish out of order apply in start order", func(t *testing.T) {
+		// A save's result reaches the tab through the scheduler. If a
+		// later save's result got there first, the earlier one would then
+		// regress the saved version and mark a fully saved tab dirty.
+		ctx := context.Background()
+		ticks := make(chan func(), 16)
+		cfg := text.DefaultConfig()
+		cfg.ScheduleNextTick = func(fn func()) bool { ticks <- fn; return true }
+		c, testLoader := newTestComponentConfig(t, NopEditor(), cfg)
+		win, err := c.Focus()
+		require.NoError(t, err)
+		var saves []chan error
+		testLoader.flusherCloser = &testFlusherCloser{
+			flushAsync: func() <-chan error {
+				ch := make(chan error, 1)
+				saves = append(saves, ch)
+				return ch
+			},
+		}
+
+		h, err := c.OpenFileTab(resource1, true)
+		require.NoError(t, err)
+		require.NoError(t, win.SetContent(h))
+		require.Nil(t, c.Settled(h))
+
+		ed, err := c.Editor(resource1)
+		require.NoError(t, err)
+		_, _, _ = ed.CellEditor().Edit(ctx, term.Coordinates{}, term.Coordinates{}, "A")
+		first, err := c.Flush(ctx, win)
+		require.NoError(t, err)
+		_, _, _ = ed.CellEditor().Edit(ctx, term.Coordinates{}, term.Coordinates{}, "B")
+		second, err := c.Flush(ctx, win)
+		require.NoError(t, err)
+		settled := c.Settled(h)
+		require.NotNil(t, settled)
+
+		saves[1] <- nil
+		saves[0] <- nil
+		require.NoError(t, <-first)
+		require.NoError(t, <-second)
+		<-settled
+
+		(<-ticks)()
+		dirty, ok := c.IsDirty(resource1)
+		require.True(t, ok)
+		assert.True(t, dirty, "the first save's result must apply first")
+		assert.NotNil(t, c.Settled(h), "the second save's result is still pending")
+
+		(<-ticks)()
+		dirty, ok = c.IsDirty(resource1)
+		require.True(t, ok)
+		assert.False(t, dirty, "both saves succeeded, so the tab must be clean")
+		assert.Nil(t, c.Settled(h))
+	})
+}
+
+// TestCloseWithSavesInFlight covers a workspace tearing down while saves are
+// still running. Close must not wait on the closer's goroutines (the workspace
+// layer already holds Close until a flush's bytes are on disk, and a reload's
+// worker parks on the very event loop Close runs on), and those goroutines
+// must not outlive the workspace's result: the only thing they wait on
+// besides it is the previous save, which always hands over.
+func TestCloseWithSavesInFlight(t *testing.T) {
+	resource1, err := workspaceapi.ParseURI("file:///a")
+	require.NoError(t, err)
+	ctx := context.Background()
+	ticks := make(chan func(), 16)
+	cfg := text.DefaultConfig()
+	cfg.ScheduleNextTick = func(fn func()) bool { ticks <- fn; return true }
+	c, testLoader := newTestComponentConfig(t, NopEditor(), cfg)
+	win, err := c.Focus()
+	require.NoError(t, err)
+	var saves []chan error
+	testLoader.flusherCloser = &testFlusherCloser{
+		flushAsync: func() <-chan error {
+			ch := make(chan error, 1)
+			saves = append(saves, ch)
+			return ch
+		},
+	}
+	h, err := c.OpenFileTab(resource1, true)
+	require.NoError(t, err)
+	require.NoError(t, win.SetContent(h))
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	first, err := c.Flush(ctx, win)
+	require.NoError(t, err)
+	second, err := c.Flush(ctx, win)
+	require.NoError(t, err)
+	settled := c.Settled(h)
+	require.NotNil(t, settled)
+
+	require.NoError(t, c.Close())
+
+	// The second save's result lands first, so its goroutine is now parked
+	// on the first save with the component already gone.
+	saves[1] <- nil
+	saves[0] <- nil
+	for _, out := range []<-chan error{first, second} {
+		select {
+		case err := <-out:
+			require.NoError(t, err)
+		case <-time.After(5 * time.Second):
+			t.Fatal("a save's result was not delivered after Close")
+		}
+		_, open := <-out
+		assert.False(t, open, "the result channel must be closed after its result")
+	}
+	select {
+	case <-settled:
+	default:
+		t.Fatal("settled must be closed once every result has been handed over")
+	}
+
+	// The results still reach the scheduler after Close and must be
+	// harmless to apply on the closed component.
+	for len(ticks) > 0 {
+		(<-ticks)()
+	}
 }
 
 // TestReloadClampsStaleCursor guards the editorFlusherCloser reload seam: when a

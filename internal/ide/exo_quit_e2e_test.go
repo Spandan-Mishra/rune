@@ -84,14 +84,7 @@ command:
 	require.NoError(t, os.WriteFile(filePath, []byte("hello\n"), 0o644))
 
 	mu := new(sync.Mutex)
-	scheduleNextTick := func(fn func()) bool {
-		go func() {
-			mu.Lock()
-			defer mu.Unlock()
-			fn()
-		}()
-		return true
-	}
+	scheduleNextTick, drainSchedule := newTestScheduler(t, mu)
 
 	var rootRef atomic.Pointer[tui.Handler]
 	publish := func(ev term.Event) bool {
@@ -127,6 +120,7 @@ command:
 	mu.Lock()
 	root.Resize(80, 24)
 	mu.Unlock()
+	drainSchedule()
 	i.WaitWorkspaces()
 
 	sendKeys := func(seq string) {
