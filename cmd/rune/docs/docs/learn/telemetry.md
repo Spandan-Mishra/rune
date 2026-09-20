@@ -23,6 +23,22 @@ There are exactly two reports.
 
 A system report is sent when Rune starts:
 
+Example startup report:
+
+```json
+{
+  "Type": "ClientStartup",
+  "SID": "s_f7a28b1e4c90",
+  "EditorMode": "standard",
+  "OS": "linux",
+  "Arch": "amd64",
+  "NumCPU": 8,
+  "SystemName": "Linux",
+  "SystemRelease": "6.8.0-45-generic",
+  "SystemVersion": "#45-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug 30 12:02:41 UTC 2024"
+}
+```
+
 | Field | Value |
 | --- | --- |
 | Install identifier | A random identifier generated the first time you run Rune. It is not derived from your hardware, your account, or anything else about you. |
@@ -40,6 +56,27 @@ A system report is sent when Rune starts:
 A usage report is sent every hour, and once more when you quit Rune.
 Every counter is reset after a successful report, so each one covers
 only the period since the last report:
+
+Example usage report:
+
+```json
+{
+  "Type": "ClientUsage",
+  "SID": "s_f7a28b1e4c90",
+  "EditorMode": "standard",
+  "Opened": 14,
+  "Closed": 11,
+  "Edited": 58,
+  "Flushed": 4,
+  "WatchedChanges": 9,
+  "Commands": 32,
+  "Languages": {
+    "go": 10,
+    "markdown": 3,
+    "json": 1
+  }
+}
+```
 
 | Field | Value |
 | --- | --- |

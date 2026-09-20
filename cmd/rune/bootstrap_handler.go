@@ -959,15 +959,12 @@ func (b *bootstrapHandler) openVimPrompt() {
 func (b *bootstrapHandler) openTelemetryPrompt() {
 	msg := "## Help us pick what to build next\n\n" +
 		"Rune reports a small amount of anonymous usage data. The most useful " +
-		"signal is which languages people actually edit and it is how we decide " +
+		"signal is which languages people actually edit, and it is how we decide " +
 		"which language support to build next.\n\n" +
 		"We never send file names, paths, file contents, terminal output, or " +
-		"anything you type. Here is a complete report:\n\n" +
-		"```json\n" +
-		apiclient.ExampleUsagePayloadJSON() + "\n" +
-		"```\n\n" +
-		"You can change this any time in ~/.rune/config.yaml, and the full list " +
-		"of fields is on the [Telemetry](https://docs.rune.build/learn/telemetry/) page in the docs."
+		"anything you type.\n\n" +
+		"You can change this any time in ~/.rune/config.yaml. A complete report " +
+		"and sample payloads are on the [Telemetry](https://docs.rune.build/learn/telemetry/) page in the docs."
 	guard := b.promptGuard()
 	b.prompt(
 		msg,

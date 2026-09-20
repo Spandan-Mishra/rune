@@ -28,7 +28,6 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/term"
 	"github.com/unstablebuild/rune-go-sdk/tui"
 
-	"unstable.build/rune/cmd/rune/ide/apiclient"
 	"unstable.build/rune/internal/browser"
 	"unstable.build/rune/internal/ide"
 )
@@ -325,8 +324,9 @@ func TestBootstrapPromptProgression(t *testing.T) {
 
 	telPrompt := prompter.prompts[2]
 	require.Contains(t, telPrompt.message, "## Help us pick what to build next")
-	require.Contains(t, telPrompt.message, "```json\n"+apiclient.ExampleUsagePayloadJSON()+"\n```")
+	require.Contains(t, telPrompt.message, "We never send file names, paths, file contents, terminal output, or anything you type.")
 	require.Contains(t, telPrompt.message, "[Telemetry](https://docs.rune.build/learn/telemetry/)")
+	require.NotContains(t, telPrompt.message, "```json")
 	require.Equal(t, []string{optTelemetryYes, optTelemetryNo}, telPrompt.options)
 	require.Equal(t, bootstrapTelemetryKeys, telPrompt.bindings)
 }
