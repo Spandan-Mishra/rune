@@ -31,6 +31,7 @@ import (
 
 	"unstable.build/rune/cmd/rune-agent/agent"
 	"unstable.build/rune/cmd/rune-agent/agent/skills"
+	"unstable.build/rune/cmd/rune-agent/configedit"
 )
 
 func writeTestSkill(t *testing.T, baseDir, name, content string) {
@@ -53,7 +54,7 @@ func newSkillsTestShell(t *testing.T, skillDirs []string) (*shell, string) {
 		&emptyDialogueStore{},
 		agent.NewRegistry(),
 		&agent.Cfg{},
-		nil,
+		configedit.NewConfig(fs, cwd, nil),
 		skills.NewRegistry(fs, cwd, skillDirs, nil),
 		cwd,
 		fs,
@@ -128,6 +129,23 @@ func TestAgentShell_SkillsReload_Command(t *testing.T) {
 	out = renderShellCommand(t, sh, repl.Command{Name: CommandName, Args: []string{"skills", "reload"}})
 	assert.Contains(t, out, "Dropped (1)")
 	assert.Contains(t, out, "diagnose")
+}
+
+func TestAgentShell_SkillsAddDir_Command(t *testing.T) {
+	sh, _ := newSkillsTestShell(t, nil)
+	newDir := t.TempDir()
+
+	writeTestSkill(t, newDir, "valid-skill", "---\nname: valid-skill\ndescription: A valid skill\n---\nValid body.")
+	writeTestSkill(t, newDir, "broken-skill", "---\nname: broken-skill\n---\nMissing description.")
+
+	out := renderShellCommand(t, sh, repl.Command{Name: CommandName, Args: []string{"skills", "add-dir", newDir}})
+	assert.Contains(t, out, "Added directory")
+	assert.Contains(t, out, newDir)
+	assert.Contains(t, out, "Discovered 1 skill(s):")
+	assert.Contains(t, out, "valid-skill")
+	assert.Contains(t, out, "Errors (1)")
+	assert.Contains(t, out, "broken-skill")
+	assert.Contains(t, out, "description")
 }
 
 func TestAgentShell_Skills_TabCompletion(t *testing.T) {

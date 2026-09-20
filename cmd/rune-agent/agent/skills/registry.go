@@ -80,7 +80,10 @@ func NewRegistry(fs workspaceapi.FileSystem, cwd workspaceapi.URI, dirs []string
 			continue
 		}
 		r.dirs = append(r.dirs, abs)
-		loaded, _ := r.loadDir(abs)
+		loaded, errs := r.loadDir(abs)
+		for _, e := range errs {
+			r.notify("skill load error in %s: %v", e.Path, e.Err)
+		}
 		for _, s := range loaded {
 			r.warnDescription(s)
 			if existing, exists := r.byName[s.Name]; !exists {
@@ -146,19 +149,20 @@ func (r *SkillRegistry) Dirs() []string {
 
 // AddDir adds a skill directory. Resolves relative paths against
 // cwd (stored at construction). Scans the directory and
-// registers all found skills. Returns the list of newly added skills.
+// registers all found skills. Returns the list of newly added skills
+// and any parsing/validation errors encountered.
 // Returns error if directory is already tracked.
-func (r *SkillRegistry) AddDir(dir string) ([]Skill, error) {
+func (r *SkillRegistry) AddDir(dir string) ([]Skill, []SkillError, error) {
 	abs := r.resolve(dir)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if slices.Contains(r.dirs, abs) {
-		return nil, fmt.Errorf("directory already tracked: %s", abs)
+		return nil, nil, fmt.Errorf("directory already tracked: %s", abs)
 	}
 
-	loaded, _ := r.loadDir(abs)
+	loaded, errs := r.loadDir(abs)
 	var added []Skill
 	for _, s := range loaded {
 		r.warnDescription(s)
@@ -171,7 +175,7 @@ func (r *SkillRegistry) AddDir(dir string) ([]Skill, error) {
 		}
 	}
 	r.dirs = append(r.dirs, abs)
-	return added, nil
+	return added, errs, nil
 }
 
 // RemoveDir removes a skill directory and unregisters all skills

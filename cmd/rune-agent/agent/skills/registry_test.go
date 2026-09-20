@@ -165,6 +165,17 @@ body`)
 		assert.Equal(t, []string{dir}, r.Dirs(), "resolved dirs should be tracked once")
 		assert.Empty(t, notifications.notifications(), "duplicate resolved dirs should not warn")
 	})
+
+	t.Run("notifies on skill load error", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "broken", "---\nname: broken\n---\nno description")
+		notifications := &recordingNotifications{}
+		_ = NewRegistry(osFileSystem{}, dirURI(""), []string{dir}, notifications)
+		notifs := notifications.notifications()
+		require.NotEmpty(t, notifs)
+		assert.Contains(t, notifs[0].msg, "skill load error in")
+		assert.Contains(t, notifs[0].msg, "broken")
+	})
 }
 
 func TestRegistryGet(t *testing.T) {
@@ -271,8 +282,9 @@ description: New
 ---
 body`)
 
-		added, err := r.AddDir(dir)
+		added, errs, err := r.AddDir(dir)
 		require.NoError(t, err)
+		assert.Empty(t, errs)
 		assert.Len(t, added, 1)
 		assert.Equal(t, "new-skill", added[0].Name)
 
@@ -286,7 +298,7 @@ body`)
 		dir := t.TempDir()
 		r := NewRegistry(osFileSystem{}, dirURI(""), []string{dir}, nil)
 
-		_, err := r.AddDir(dir)
+		_, _, err := r.AddDir(dir)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "already tracked")
 	})
@@ -301,7 +313,7 @@ description: Relative
 body`)
 
 		r := NewRegistry(osFileSystem{}, dirURI(workspace), nil, nil)
-		_, err := r.AddDir(relDir)
+		_, _, err := r.AddDir(relDir)
 		require.NoError(t, err)
 
 		_, ok := r.Get("rel")
@@ -352,12 +364,27 @@ description: Duplicate
 dup`)
 
 		r := NewRegistry(osFileSystem{}, dirURI(""), []string{dir1}, nil)
-		added, err := r.AddDir(dir2)
+		added, _, err := r.AddDir(dir2)
 		require.NoError(t, err)
 		assert.Empty(t, added, "existing name should be skipped")
 
 		s, _ := r.Get("shared")
 		assert.Equal(t, "Original", s.Description)
+	})
+
+	t.Run("surfaces parse errors for broken skills", func(t *testing.T) {
+		dir := t.TempDir()
+		writeSkill(t, dir, "valid", "---\nname: valid\ndescription: Valid\n---\nbody")
+		writeSkill(t, dir, "broken", "---\nname: broken\n---\nno description")
+
+		r := NewRegistry(osFileSystem{}, dirURI(""), nil, nil)
+		added, errs, err := r.AddDir(dir)
+		require.NoError(t, err)
+		assert.Len(t, added, 1)
+		assert.Equal(t, "valid", added[0].Name)
+		require.Len(t, errs, 1)
+		assert.Contains(t, errs[0].Path, "broken")
+		assert.Error(t, errs[0].Err)
 	})
 }
 
@@ -638,7 +665,7 @@ b`)
 	}()
 	go func() {
 		defer wg.Done()
-		r.AddDir(dir2) //nolint:errcheck
+		_, _, _ = r.AddDir(dir2)
 	}()
 	go func() {
 		defer wg.Done()

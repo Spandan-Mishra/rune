@@ -1375,7 +1375,7 @@ func (s *shell) addSkillDir(dir string) (iterator.Iterator[component.Responsive]
 		}
 		return nil, fmt.Errorf("update config: %w", err)
 	}
-	added, err := s.skillRegistry.AddDir(dir)
+	added, errs, err := s.skillRegistry.AddDir(dir)
 	if err != nil {
 		return markdownOutput(fmt.Sprintf("Added directory `%s` to config *(registry: %v)*", dir, err)), nil
 	}
@@ -1385,6 +1385,12 @@ func (s *shell) addSkillDir(dir string) (iterator.Iterator[component.Responsive]
 		fmt.Fprintf(&b, "\nDiscovered %d skill(s):\n\n", len(added))
 		for _, sk := range added {
 			fmt.Fprintf(&b, "- **%s** — %s\n", sk.Name, sk.Description)
+		}
+	}
+	if len(errs) > 0 {
+		fmt.Fprintf(&b, "\n### Errors (%d)\n\n", len(errs))
+		for _, e := range errs {
+			fmt.Fprintf(&b, "- `%s`: %v\n", e.Path, e.Err)
 		}
 	}
 	return markdownOutput(b.String()), nil
