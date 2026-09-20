@@ -537,6 +537,71 @@ missing description`)
 		assert.Contains(t, res.Errors[0].Path, "broken")
 		assert.Error(t, res.Errors[0].Err)
 		assert.Contains(t, res.Errors[0].Error(), "description")
+
+		// Unreadable / nonexistent tracked directory surfaces as SkillError
+		missingDir := filepath.Join(t.TempDir(), "nonexistent")
+		rMissing := NewRegistry(osFileSystem{}, dirURI(""), []string{missingDir}, nil)
+		resMissing := rMissing.Reload()
+		require.Len(t, resMissing.Errors, 1)
+		assert.Equal(t, missingDir, resMissing.Errors[0].Path)
+		assert.Error(t, resMissing.Errors[0].Err)
+	})
+}
+
+func TestSkillEqual(t *testing.T) {
+	base := Skill{
+		Name:          "skill",
+		Description:   "desc",
+		Body:          "body",
+		Dir:           "/path/to/skill",
+		License:       "MIT",
+		Compatibility: ">=1.0",
+		Metadata:      map[string]string{"author": "alice"},
+		AllowedTools:  "read_file",
+		Type:          "agent",
+		Model:         "claude",
+		ParentContext: true,
+	}
+
+	t.Run("identical skills are equal", func(t *testing.T) {
+		other := base
+		other.Metadata = map[string]string{"author": "alice"}
+		assert.True(t, skillEqual(base, other))
+	})
+
+	t.Run("nil and empty metadata handling", func(t *testing.T) {
+		s1 := base
+		s1.Metadata = nil
+		s2 := base
+		s2.Metadata = map[string]string{}
+		assert.True(t, skillEqual(s1, s2))
+	})
+
+	t.Run("different metadata is not equal", func(t *testing.T) {
+		other := base
+		other.Metadata = map[string]string{"author": "bob"}
+		assert.False(t, skillEqual(base, other))
+	})
+
+	t.Run("different field is not equal", func(t *testing.T) {
+		fields := []func(*Skill){
+			func(s *Skill) { s.Name = "diff" },
+			func(s *Skill) { s.Description = "diff" },
+			func(s *Skill) { s.Body = "diff" },
+			func(s *Skill) { s.Dir = "diff" },
+			func(s *Skill) { s.License = "diff" },
+			func(s *Skill) { s.Compatibility = "diff" },
+			func(s *Skill) { s.AllowedTools = "diff" },
+			func(s *Skill) { s.Type = "diff" },
+			func(s *Skill) { s.Model = "diff" },
+			func(s *Skill) { s.ParentContext = false },
+		}
+		for i, mod := range fields {
+			other := base
+			other.Metadata = map[string]string{"author": "alice"}
+			mod(&other)
+			assert.False(t, skillEqual(base, other), "field %d should not be equal", i)
+		}
 	})
 }
 

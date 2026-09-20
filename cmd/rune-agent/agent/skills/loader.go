@@ -30,7 +30,7 @@ func (r *SkillRegistry) loadDir(dir string) ([]Skill, []SkillError) {
 	entries, err := r.fs.ReadDir(dir)
 	if err != nil {
 		slog.Debug("skills: cannot read directory", "dir", dir, "error", err)
-		return nil, nil
+		return nil, []SkillError{{Path: dir, Err: err}}
 	}
 
 	var result []Skill

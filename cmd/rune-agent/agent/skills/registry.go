@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"maps"
 	"os/user"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -264,17 +265,12 @@ func (r *SkillRegistry) Reload() ReloadResult {
 }
 
 func skillEqual(a, b Skill) bool {
-	return a.Name == b.Name &&
-		a.Description == b.Description &&
-		a.Body == b.Body &&
-		a.Dir == b.Dir &&
-		a.License == b.License &&
-		a.Compatibility == b.Compatibility &&
-		a.AllowedTools == b.AllowedTools &&
-		a.Type == b.Type &&
-		a.Model == b.Model &&
-		a.ParentContext == b.ParentContext &&
-		maps.Equal(a.Metadata, b.Metadata)
+	if !maps.Equal(a.Metadata, b.Metadata) {
+		return false
+	}
+	a.Metadata = nil
+	b.Metadata = nil
+	return reflect.DeepEqual(a, b)
 }
 
 func (r *SkillRegistry) resolve(dir string) string {
