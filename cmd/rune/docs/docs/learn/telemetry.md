@@ -27,15 +27,18 @@ Example startup report:
 
 ```json
 {
-  "Type": "ClientStartup",
-  "SID": "s_f7a28b1e4c90",
-  "EditorMode": "standard",
-  "OS": "linux",
-  "Arch": "amd64",
-  "NumCPU": 8,
-  "SystemName": "Linux",
-  "SystemRelease": "6.8.0-45-generic",
-  "SystemVersion": "#45-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug 30 12:02:41 UTC 2024"
+  "Type": "ClientSystem",
+  "InstallID": "7570ed69-3cf0-4aa4-b817-57351e31a30e",
+  "Tampered": false,
+  "InstallIDErr": "",
+  "SID": "ad560109-289a-45e3-bf74-e581ca3cc101",
+  "Version": "v0.8.2",
+  "EditorMode": "modal",
+  "SystemArquitecture": "x86_64",
+  "SystemOS": "linux",
+  "SystemName": "nua",
+  "SystemRelease": "7.2.3-arch1-3",
+  "SystemVersion": "#1 SMP PREEMPT_DYNAMIC Sun, 06 Sep 2026 13:01:04 +0000"
 }
 ```
 
@@ -62,8 +65,8 @@ Example usage report:
 ```json
 {
   "Type": "ClientUsage",
-  "SID": "s_f7a28b1e4c90",
-  "EditorMode": "standard",
+  "SID": "ad560109-289a-45e3-bf74-e581ca3cc101",
+  "EditorMode": "modal",
   "Opened": 14,
   "Closed": 11,
   "Edited": 58,
@@ -71,9 +74,9 @@ Example usage report:
   "WatchedChanges": 9,
   "Commands": 32,
   "Languages": {
-    "go": 10,
-    "markdown": 3,
-    "json": 1
+    "go": 14,
+    "markdown": 2,
+    "python": 3
   }
 }
 ```
