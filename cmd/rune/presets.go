@@ -44,5 +44,9 @@ func renderPreset(editor string, telemetry bool) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown editor choice: %q", editor)
 	}
-	return fmt.Sprintf("%s\ntelemetry:\n  # Report anonymous usage and system information. See the Telemetry\n  # page in the Rune docs for the full list of what is reported.\n  enabled: %t\n", body, telemetry), nil
+	const tmpl = "%s\ntelemetry:\n" +
+		"  # Report anonymous usage and system information. See the Telemetry\n" +
+		"  # page in the Rune docs for the full list of what is reported.\n" +
+		"  enabled: %t\n"
+	return fmt.Sprintf(tmpl, body, telemetry), nil
 }

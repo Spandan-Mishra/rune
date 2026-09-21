@@ -578,7 +578,6 @@ func (b *bootstrapHandler) performSwap() error {
 			closeErr = fmt.Errorf("close pre-config ide: %w", cerr)
 		}
 		b.preIDE = nil
-		b.prompter = realIDE
 	}
 	b.publishAppMenuInstall()
 	b.publishQuickMenuInstall()
@@ -963,8 +962,8 @@ func (b *bootstrapHandler) openTelemetryPrompt() {
 		"which language support to build next.\n\n" +
 		"We never send file names, paths, file contents, terminal output, or " +
 		"anything you type.\n\n" +
-		"You can change this any time in ~/.rune/config.yaml. A complete report " +
-		"and sample payloads are on the [Telemetry](https://docs.rune.build/learn/telemetry/) page in the docs."
+		"You can change this any time in your config. A complete report " +
+		"and sample payloads are on the Telemetry page in the docs."
 	guard := b.promptGuard()
 	b.prompt(
 		msg,

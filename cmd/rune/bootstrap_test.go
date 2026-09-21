@@ -98,7 +98,6 @@ func TestRenderPreset(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, ema, "enabled: false",
 		"telemetry=false must render enabled: false")
-	require.NoError(t, err)
 	require.Contains(t, ema, "mode: emacs",
 		"the emacs choice must switch the editor into emacs")
 	require.Contains(t, ema, `"<meta-f>": "windowfocus right"`,
@@ -325,7 +324,9 @@ func TestBootstrapPromptProgression(t *testing.T) {
 	telPrompt := prompter.prompts[2]
 	require.Contains(t, telPrompt.message, "## Help us pick what to build next")
 	require.Contains(t, telPrompt.message, "We never send file names, paths, file contents, terminal output, or anything you type.")
-	require.Contains(t, telPrompt.message, "[Telemetry](https://docs.rune.build/learn/telemetry/)")
+	require.Contains(t, telPrompt.message, "any time in your config")
+	require.Contains(t, telPrompt.message, "Telemetry page in the docs")
+	require.NotContains(t, telPrompt.message, "[Telemetry](")
 	require.NotContains(t, telPrompt.message, "```json")
 	require.Equal(t, []string{optTelemetryYes, optTelemetryNo}, telPrompt.options)
 	require.Equal(t, bootstrapTelemetryKeys, telPrompt.bindings)
