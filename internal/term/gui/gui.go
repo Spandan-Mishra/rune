@@ -124,6 +124,7 @@ type GUI struct {
 	prevTickKey bool
 
 	interruptPending atomic.Bool
+	started          atomic.Bool
 	// processWindowClosed turns a pending window close request into
 	// events for the handler. WithCloseRequestEvent installs it; it
 	// defaults to a no-op, leaving ebiten's default behavior in place.
@@ -307,16 +308,26 @@ func (g *GUI) SetForceFullRepaint(force bool) {
 func (g *GUI) PublishEvent(ev term.Event) bool {
 	if ev.Type == term.EventInterrupt && ev.Raw == nil && ev.UserFunc == nil {
 		g.interruptPending.Store(true)
-		ebiten.ScheduleFrame()
+		g.scheduleFrame()
 		return true
 	}
 	select {
 	case g.updateChan <- ev:
-		ebiten.ScheduleFrame()
+		g.scheduleFrame()
 		return true
 	default:
 		return false
 	}
+}
+
+// scheduleFrame wakes the run loop. Before ebiten's first Game callback
+// the UI is still being set up on the main thread and the wake-up traps
+// inside GLFW; the first frame picks up whatever was published.
+func (g *GUI) scheduleFrame() {
+	if !g.started.Load() {
+		return
+	}
+	ebiten.ScheduleFrame()
 }
 
 // awaitEchoInterrupt reports whether an interrupt was published within
@@ -337,6 +348,7 @@ func (g *GUI) awaitEchoInterrupt() bool {
 
 // Update satisfies ebiten.Game. It's called every time a new frame is to be scheduled.
 func (g *GUI) Update() error {
+	g.started.Store(true)
 	g.pendingEvents = append(g.pendingEvents, g.mouse.processMouse()...)
 	g.pendingEvents = g.input.processEvents(g.pendingEvents)
 	g.pendingEvents = append(g.pendingEvents, g.processWindowClosed()...)
@@ -448,6 +460,7 @@ func (g *GUI) Update() error {
 
 // Layout satisfies ebiten.Game. It provides the terminal gui size in pixels.
 func (g *GUI) Layout(width, height int) (int, int) {
+	g.started.Store(true)
 	s := g.fontManager.DeviceScale()
 
 	// resize handler only if effective size has changed

@@ -183,3 +183,59 @@ func TestServerPublish(t *testing.T) {
 func TestServerSetContent(t *testing.T) {
 	/* tested via ex integration tests */
 }
+
+// resizeRecorder stands in for the handler on the far end of a tab's
+// stream, recording the dimensions the server forwards to it.
+type resizeRecorder struct {
+	*browsertest.TestHandler
+	mu      sync.Mutex
+	resizes [][2]int
+}
+
+func (r *resizeRecorder) Resize(width, height int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resizes = append(r.resizes, [2]int{width, height})
+}
+
+func (r *resizeRecorder) last() [2]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.resizes) == 0 {
+		return [2]int{}
+	}
+	return r.resizes[len(r.resizes)-1]
+}
+
+// resizeOnUnlockLocker runs fn as the browser lock is released. Resizes
+// reach a streamHandler under that lock, so this places one exactly where
+// another goroutine's would land while the tab's stream finishes setting up.
+type resizeOnUnlockLocker struct {
+	sync.Mutex
+	once sync.Once
+	fn   func()
+}
+
+func (l *resizeOnUnlockLocker) Unlock() {
+	l.once.Do(func() {
+		if l.fn != nil {
+			l.fn()
+		}
+	})
+	l.Mutex.Unlock()
+}
+
+// TestStreamHandlerResizeDuringStreamSetup covers a tab whose window sizes
+// it while the stream serving that tab is still being set up. The size has
+// to reach the far end either way, or the tab renders blank.
+func TestStreamHandlerResizeDuringStreamSetup(t *testing.T) {
+	rec := &resizeRecorder{TestHandler: browsertest.NewTestHandler()}
+	lock := new(resizeOnUnlockLocker)
+	h := &streamHandler{Handler: rec, mu: lock}
+	lock.fn = func() { h.Resize(20, 6) }
+
+	h.doneSetup()
+
+	assert.Equal(t, [2]int{20, 6}, rec.last(),
+		"the window's size must reach the handler behind the stream")
+}

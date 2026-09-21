@@ -30,6 +30,32 @@ import (
 )
 
 func TestUpdate(t *testing.T) {
+	t.Run("events published before the first frame do not wake ebiten", func(t *testing.T) {
+		var events []term.Event
+		mock := mockHandler{
+			assertDraw: func(term.Writer) {},
+			assertEvent: func(ev term.Event) (bool, bool) {
+				events = append(events, ev)
+				return false, true
+			},
+		}
+		gui, _ := newTestGUI(t, &mock)
+
+		require.False(t, gui.started.Load())
+		require.True(t, gui.PublishEvent(term.Event{Type: term.EventInterrupt}))
+		require.True(t, gui.PublishEvent(term.Event{Type: term.EventKey, Ch: 'a', Raw: []byte("a")}))
+		require.False(t, gui.started.Load(),
+			"publishing must not mark ebiten as running")
+		require.True(t, gui.interruptPending.Load())
+
+		require.NoError(t, gui.Update())
+		assert.True(t, gui.started.Load())
+		assert.False(t, gui.interruptPending.Load(),
+			"the first frame picks up interrupts published before it")
+		require.Len(t, events, 1)
+		assert.Equal(t, term.EventKey, events[0].Type)
+	})
+
 	t.Run("passes iteration in Draw context to root handler", func(t *testing.T) {
 		var called int
 		mock := mockHandler{assertDraw: func(w term.Writer) {
