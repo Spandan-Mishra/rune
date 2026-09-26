@@ -15,12 +15,15 @@ Enable it in `config.yaml`:
 
 ```yaml tab
 editor:
-  mode: "modal"
+  mode: "vim"
 ```
+
+Older configs say `mode: "modal"`, which still selects the vim editor as a
+deprecated alias.
 
 ## Where modal editing applies
 
-Setting `mode: "modal"` does more than turn your file buffers modal; the
+Setting `mode: "vim"` does more than turn your file buffers modal; the
 same editor powers prompts and output surfaces throughout Rune, so the
 motions, operators, and text objects on this page work everywhere:
 
@@ -47,19 +50,19 @@ combination into another before it reaches the editor.
 
 ## Message bar appearance
 
-The modal editor displays messages over the bottom row of the editor. Configure
-its base attributes and layout under `editor.modal.message_bar`:
+The vim editor displays messages over the bottom row of the editor. Configure
+its base attributes and layout under `editor.vim.message_bar`:
 
 ```yaml tab
 editor:
-  modal:
+  vim:
     message_bar:
       attr: {fg: default, bg: gray}
       layout: '░▒▓█ {{ .Message | fg "white" }} '
 ```
 
 ```python tab
-config["editor"]["modal"]["message_bar"] = {
+config["editor"]["vim"]["message_bar"] = {
     "attr": attr(fg = "default", bg = "gray"),
     "layout": '░▒▓█ {{ .Message | fg "white" }} ',
 }
@@ -70,20 +73,24 @@ the `bg`, `fg`, `bold`, `italic`, `underline`, `reverse`, and `dim` styling
 operators used by status-bar layouts. Styling on `.Message` overrides the base
 `attr` values.
 
-Search matches in the buffer use `editor.modal.search_attr`:
+Search matches in the buffer use `editor.vim.search_attr`:
 
 ```yaml tab
 editor:
-  modal:
+  vim:
     search_attr: {fg: grey, bg: yellow}
 ```
 
 ```python tab
-config["editor"]["modal"]["search_attr"] = attr(
+config["editor"]["vim"]["search_attr"] = attr(
     fg = "grey",
     bg = "yellow",
 )
 ```
+
+Older configs name this section `editor.modal`, from before the mode was
+renamed. Both spellings still work, in YAML and in `config.star`; where a
+config sets the same setting under both, `editor.vim` wins.
 
 ## Windows and tabs
 
@@ -118,7 +125,7 @@ Common window actions use memorable `<meta>` and `<alt>` bindings:
 | Split horizontally / vertically | `<ctrl-meta-h>` / `<ctrl-meta-v>` |
 | Maximise the focused window | `<shift-meta-f>` |
 | Open a terminal in place or in a new split | `<meta-enter>` |
-| Close the focused window | `<meta-w>` |
+| Close the focused window / the others | `<meta-w>` / `<shift-meta-w>` |
 | Prefill `windowconverttab` in the command prompt | `<alt-enter>` |
 
 Tabs use the horizontal `h` / `l` pair. Add `<shift>` to reorder the current

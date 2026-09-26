@@ -206,8 +206,17 @@ func TestAppLaunchArgs(t *testing.T) {
 			wantOK: true,
 		},
 		{
-			name:    "windows unsupported",
+			name:    "windows without zdotdir",
 			goos:    "windows",
+			zdotDir: "",
+			wantArgs: []string{
+				"-G", "-w", "",
+			},
+			wantOK: true,
+		},
+		{
+			name:    "freebsd unsupported",
+			goos:    "freebsd",
 			zdotDir: "",
 			wantOK:  false,
 		},
@@ -437,5 +446,27 @@ func TestResolveDefaultConfigPathUsesDatadirDefaultLocation(t *testing.T) {
 	want := filepath.Join(dataDir, "config.yaml")
 	if got != want {
 		t.Fatalf("resolveDefaultConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestDataPathDefaultsUseOSPaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home directory: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"datadir", defaultDataPath, filepath.Join(home, ".rune")},
+		{"workspace server log", flag.Lookup("workspace-server-log").DefValue,
+			filepath.Join(home, ".rune", "server.log")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Fatalf("default = %q, want %q", tc.got, tc.want)
+			}
+		})
 	}
 }

@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -139,12 +138,12 @@ func init() {
 	flagConfigPath = flag.StringP("config", "c", defaultConfigPath,
 		"Use this file for configuring rune")
 
-	defaultDataPath = path.Join(home, ".rune")
+	defaultDataPath = filepath.Join(home, ".rune")
 	flagDataPath = flag.StringP("datadir", "d", defaultDataPath,
 		"Set temporary data directory")
 
 	flagWorkspaceServerLogFile = flag.StringP("workspace-server-log", "o",
-		path.Join(defaultDataPath, "server.log"),
+		filepath.Join(defaultDataPath, "server.log"),
 		"Log workspace server logs to this file")
 
 	version = versionString(debug.Tag, debug.Commit, debug.BuildDate)
@@ -161,8 +160,8 @@ func versionString(tag, commit, buildDate string) string {
 }
 
 func resolveDefaultConfigPath(dataDir string) string {
-	yamlPath := path.Join(dataDir, configFilename)
-	starPath := path.Join(dataDir, configStarFilename)
+	yamlPath := filepath.Join(dataDir, configFilename)
+	starPath := filepath.Join(dataDir, configStarFilename)
 	if _, err := os.Stat(yamlPath); err == nil {
 		return yamlPath
 	}
@@ -428,7 +427,7 @@ func appLaunchArgs(goos, zdotDir string) ([]string, bool) {
 		args = append(args, "--rune-zdotdir="+zdotDir)
 	}
 	switch goos {
-	case "darwin", "linux":
+	case "darwin", "linux", "windows":
 		return append(args, "-G", "-w", ""), true
 	default:
 		return nil, false
@@ -779,6 +778,13 @@ func runGUI(
 		}
 		return g.PublishEvent(ev)
 	}
+	cellPixelSize := func() (int, int) {
+		g := guiRef.Load()
+		if g == nil {
+			return 0, 0
+		}
+		return g.CellPixelSize()
+	}
 
 	// We load config twice, but it's better than the race conditions caused
 	// by env var resolution order.
@@ -808,7 +814,7 @@ func runGUI(
 	root, err := newBootstrapHandler(
 		*flagDataPath, *flagConfigPath,
 		*flagWorkspace, *flagZdotDir, filenames,
-		launchCmd, runner, mu, publishEvent,
+		launchCmd, runner, mu, publishEvent, cellPixelSize,
 		func(u *url.URL) error { return extbrowser.Browse(u) },
 		text.NewSystemClipboard(), os.TempDir(), rootCfg, trust,
 	)
@@ -860,6 +866,8 @@ func runGUI(
 	defer func() { _ = root.Close() }()
 	guiRef.Store(g)
 	root.attachGUI(g, transparentWindow)
+	defer watchGUISignals(publishEvent,
+		quitEvent(appMenuKeyBindings(cfg)))()
 
 	if fg, bg := getGUIWindowOpacity(browser, cfg); transparentWindow && (fg != 1 || bg != 1) {
 		g.SetOpacity(bg, fg)

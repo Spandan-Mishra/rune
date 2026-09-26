@@ -148,9 +148,14 @@ BLUECTL_CONFIG_ROOT := $(abspath deploy/bluectl)
 # Helper: resolve a leaf config dir given env (prod|staging) and os-arch slug.
 BLUECTL_CONFIG = $(BLUECTL_CONFIG_ROOT)/$(1)/$(2)
 
+# Inside a worktree `.git` is a file and the hooks live in the common dir, so a
+# literal .git/hooks/... target can never be satisfied and every build reruns
+# the install.
+GIT_HOOKS := $(shell git rev-parse --git-path hooks 2>/dev/null)
+
 default: CGO_ENABLED=CGO_ENABLED=1
 default: GOPRIVATE=github.com/unstablebuild,unstable.build/*
-default: .git/hooks/pre-commit .git/hooks/commit-msg $(EXECS)
+default: $(if $(GIT_HOOKS),$(GIT_HOOKS)/pre-commit) $(EXECS)
 
 debug: RUNE_DEBUG_BUILD := true
 debug: CGO_ENABLED=CGO_ENABLED=1
@@ -165,12 +170,11 @@ rune-agent: CGO_ENABLED=CGO_ENABLED=1
 rune-agent: GOPRIVATE=github.com/unstablebuild,unstable.build/*
 rune-agent: $(BIN)/rune-agent
 
-.git/hooks/pre-commit: .pre-commit-config.yaml
-	@ command -v pre-commit >/dev/null 2>&1 && pre-commit install \
-		|| echo "pre-commit not installed; skipping git hook setup"
-
-.git/hooks/commit-msg: .pre-commit-config.yaml
-	@ command -v pre-commit >/dev/null 2>&1 && pre-commit install \
+# One install covers both hook types (default_install_hook_types). Two
+# concurrent installs race writing these files and can strand a valid hook as
+# pre-commit.legacy, which makes every later commit abort in migration mode.
+$(GIT_HOOKS)/pre-commit: .pre-commit-config.yaml
+	@ command -v pre-commit >/dev/null 2>&1 && pre-commit install -f \
 		|| echo "pre-commit not installed; skipping git hook setup"
 
 test:

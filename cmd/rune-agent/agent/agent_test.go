@@ -40,6 +40,7 @@ import (
 	"github.com/unstablebuild/rune-go-sdk/iterator"
 	"unstable.build/rune/cmd/rune-agent/agent/skills"
 	"unstable.build/rune/cmd/rune-agent/dialogue/dialoguemanager"
+	"unstable.build/rune/internal/llm/anthropic"
 )
 
 func TestAgentRun(t *testing.T) {
@@ -1094,6 +1095,32 @@ func TestCompactDialoguePlumbsMaxOutputTokens(t *testing.T) {
 		assert.Equal(t, 0, svc.requests[0].MaxOutputTokens,
 			"explicit zero must not become a positive budget")
 	})
+}
+
+func TestSummarizeMaxOutputTokens(t *testing.T) {
+	capped := llmapi.ModelEntry{Provider: anthropic.LLMProvider, Name: anthropic.ClaudeSonnet4Dot5}
+	uncapped := llmapi.ModelEntry{Provider: "llamacpp", Name: "local"}
+
+	tests := []struct {
+		name         string
+		sessionValue int
+		model        llmapi.ModelEntry
+		want         int
+	}{
+		{"no override falls back to the default", 0, capped, defaultSummarizeMaxTokens},
+		{"default clamped to the ceiling", 0, llmapi.ModelEntry{
+			Provider: anthropic.LLMProvider, Name: anthropic.ClaudeHaiku3,
+		}, 4096},
+		{"override under the ceiling is respected", 50_000, capped, 50_000},
+		{"override above the ceiling is clamped", 128_000, capped, 64_000},
+		{"override kept when the ceiling is unknown", 128_000, uncapped, 128_000},
+		{"no override and unknown ceiling leaves the provider default", 0, uncapped, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, SummarizeMaxOutputTokens(tt.sessionValue, tt.model))
+		})
+	}
 }
 
 func TestAgentRun_StoreGetError(t *testing.T) {

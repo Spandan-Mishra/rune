@@ -85,7 +85,7 @@ func WithDispatchOnPreview(cmd string, fn previewFunc) Option {
 }
 
 // WithPublishEvent sets the EventPublisher of the IDE.
-// The default is tui.PublishEvent.
+// The given EventPublisher must be safe for concurrent use.
 func WithPublishEvent(p EventPublisher) Option {
 	return func(opts *options) {
 		opts.publishEvent = p
@@ -223,7 +223,7 @@ func WithDefaultConfigYAML(base string, overrides ...string) Option {
 // WithDefaultConfigStarlark sets the default baseline config as a Starlark
 // source. The script must bind a top-level `config` dict. The loader exposes
 // two predeclared globals to the script:
-//   - mode: "modal" when modal is true, otherwise "standard"
+//   - mode: "vim" when modal is true, otherwise "standard"
 //   - tui: the given tui boolean
 func WithDefaultConfigStarlark(src string, modal bool, tui bool) Option {
 	return func(opts *options) {
@@ -269,6 +269,16 @@ func WithBell(bell func()) Option {
 func WithScheduleNextTick(scheduleFn func(func()) bool) Option {
 	return func(opts *options) {
 		opts.scheduleFn = scheduleFn
+	}
+}
+
+// WithCellPixelSize sets how terminals learn the cell size in pixels,
+// which enables the kitty graphics protocol. Without it, or while it
+// reports zero, terminals behave as a cells-only display and clients
+// fall back to text.
+func WithCellPixelSize(cellPixelSize func() (width, height int)) Option {
+	return func(opts *options) {
+		opts.cellPixelSize = cellPixelSize
 	}
 }
 
@@ -503,6 +513,7 @@ type options struct {
 	defaultConfig        string
 	bell                 func()
 	scheduleFn           func(func()) bool
+	cellPixelSize        func() (int, int)
 	afterFunc            func(time.Duration, func()) *time.Timer
 	debugCommands        bool
 	streamingOpen        bool

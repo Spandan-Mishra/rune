@@ -124,14 +124,17 @@ becomes a buffer you edit with a full Rune editor, with cursor motions,
 word jumps, selection, yank and paste, undo, and auto-pairing all
 available.
 
-The editor follows your `editor.mode`: `modal` mode gives you
+The editor follows your `editor.mode`: `vim` mode gives you
 [modal editing](./vim-editor.md) with normal-mode motions and text objects,
-`standard` mode gives you the [standard editor](./standard-editor.md), and
-`emacs` mode gives you the [Emacs editor](./emacs-editor.md). In `exo` mode the
-prompt cannot host your external editor, so it uses your
+`helix` mode gives you the [Helix editor](./helix-editor.md) and its
+selection-first grammar, `standard` mode gives you the
+[standard editor](./standard-editor.md), and `emacs` mode gives you the
+[Emacs editor](./emacs-editor.md). In `exo` mode the prompt cannot host your
+external editor, so it uses your
 [fallback editor](./exoeditor.md#fallback-editor) (`editor.exo.fallback`),
-which may be modal, standard, or Emacs. Either way you are editing the command
-itself, not a file, so the buffer is the single line that will be dispatched.
+which may be modal, Helix, standard, or Emacs. Either way you are editing the
+command itself, not a file, so the buffer is the single line that will be
+dispatched.
 
 While edit mode is active, completion, history, and the manual are
 suspended so your keystrokes go straight to the editor. To leave it:
@@ -223,6 +226,35 @@ A binding only fires if the window in focus does not claim the key first, so
 the shell. See [When a command binding doesn't
 fire](./key-mapping.md#when-a-command-binding-doesnt-fire) for how to keep the
 key you want to press and still have the binding run everywhere.
+
+## Move a binding to another key
+
+`command.key_bindings` is keyed by the key combination, not by the command, and
+your config is merged onto the shipped bindings. Binding a command to a new key
+therefore *adds* a second way to run it: the original key stays bound. This
+surprises people who rebind a key that their keyboard layout needs for typing.
+On a French layout, for example, `<alt-shift-l>` types `|`, but the standard
+preset binds it to `windowmove right`, so the pipe character never reaches the
+editor.
+
+To free the key, "reset" it by binding it to the empty string, and bind the
+command to the key you actually want:
+
+```yaml tab
+command:
+  key_bindings:
+    "<alt-shift-l>": ""              # reset the original binding
+    "<alt-shift-right>": "windowmove right"
+```
+
+```python tab
+config["command"]["key_bindings"]["<alt-shift-l>"] = ""
+config["command"]["key_bindings"]["<alt-shift-right>"] = "windowmove right"
+```
+
+An empty value is an explicit unbind: the entry stays in the map, but Rune
+dispatches nothing for it. Deleting the key from your own config is not the
+same thing, because the shipped binding underneath still applies.
 
 ## Replay keys as macros with `echo`
 

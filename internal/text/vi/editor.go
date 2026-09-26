@@ -153,6 +153,14 @@ func (c *viEditor) UnregisterREPLCommand(cmd string) error {
 	return errors.New("not supported")
 }
 
+func (e *viEditor) RegisterResourceOpener(string, textapi.ResourceOpenHandler) error {
+	return errors.New("not supported")
+}
+
+func (e *viEditor) UnregisterResourceOpener(string) error {
+	return errors.New("not supported")
+}
+
 // Editor is not supported
 func (e *viEditor) Editor(file workspaceapi.URI) (text.Handler, error) {
 	// NOTE: it would be dead code
